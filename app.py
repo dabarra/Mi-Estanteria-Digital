@@ -2,7 +2,8 @@ import os
 import re
 import sqlite3
 import time
-from datetime import datetime
+import uuid
+from datetime import date, datetime
 from typing import Any, Optional
 
 import streamlit as st
@@ -28,6 +29,10 @@ PASSWORD_SPECIAL_PATTERN = re.compile(r"""[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]"
 LOCK_SECONDS = 120
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def today_iso() -> str:
+    return date.today().isoformat()
 
 
 def get_connection() -> sqlite3.Connection:
@@ -111,6 +116,12 @@ def _migrate_legacy_library(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE biblioteca_usuario SET estado = 'Pendiente' WHERE estado IS NULL OR estado = ''"
     )
+    if "fecha_inicio" not in cols:
+        conn.execute("ALTER TABLE biblioteca_usuario ADD COLUMN fecha_inicio TEXT")
+    if "fecha_fin" not in cols:
+        conn.execute("ALTER TABLE biblioteca_usuario ADD COLUMN fecha_fin TEXT")
+    if "paginas_leidas_abandono" not in cols:
+        conn.execute("ALTER TABLE biblioteca_usuario ADD COLUMN paginas_leidas_abandono INTEGER")
 
 
 def init_db() -> None:
@@ -135,7 +146,7 @@ def init_db() -> None:
                 isbn_13 TEXT UNIQUE,
                 title TEXT NOT NULL,
                 author TEXT NOT NULL,
-                genre TEXT NOT NULL,
+                genre TEXT NOT NULL DEFAULT 'Sin especificar',
                 idioma TEXT NOT NULL,
                 paginas INTEGER,
                 cover_path TEXT,
@@ -151,6 +162,9 @@ def init_db() -> None:
                 user_id INTEGER NOT NULL,
                 book_id INTEGER NOT NULL,
                 estado TEXT NOT NULL DEFAULT 'Pendiente',
+                fecha_inicio TEXT,
+                fecha_fin TEXT,
+                paginas_leidas_abandono INTEGER,
                 added_at TEXT NOT NULL,
                 UNIQUE(user_id, book_id),
                 FOREIGN KEY(user_id) REFERENCES usuarios(id),
@@ -257,6 +271,7 @@ def save_cover_file(reference_isbn: str, uploaded_file) -> Optional[str]:
     return path
 
 
+
 def create_user(username: str, email: str, password: str) -> None:
     with get_connection() as conn:
         conn.execute(
@@ -311,18 +326,22 @@ def find_book_by_isbn(isbn10: Optional[str], isbn13: Optional[str]) -> Optional[
     with get_connection() as conn:
         if isbn10 and isbn13:
             row = conn.execute(
-                "SELECT * FROM libros_comunes WHERE isbn_10 = ? OR isbn_13 = ?",
-                (isbn10, isbn13),
+                """
+                SELECT * FROM libros_comunes
+                WHERE isbn_10 IN (?, ?) OR isbn_13 IN (?, ?)
+                LIMIT 1
+                """,
+                (isbn10, isbn13, isbn10, isbn13),
             ).fetchone()
         elif isbn10:
             row = conn.execute(
-                "SELECT * FROM libros_comunes WHERE isbn_10 = ?",
-                (isbn10,),
+                "SELECT * FROM libros_comunes WHERE isbn_10 = ? OR isbn_13 = ? LIMIT 1",
+                (isbn10, isbn10),
             ).fetchone()
         elif isbn13:
             row = conn.execute(
-                "SELECT * FROM libros_comunes WHERE isbn_13 = ?",
-                (isbn13,),
+                "SELECT * FROM libros_comunes WHERE isbn_13 = ? OR isbn_10 = ? LIMIT 1",
+                (isbn13, isbn13),
             ).fetchone()
         else:
             return None
@@ -339,6 +358,8 @@ def insert_libro_comun(
     paginas: Optional[int],
     cover_path: Optional[str],
 ) -> int:
+    if not isbn10 and not isbn13:
+        raise ValueError("Debes indicar ISBN-10 o ISBN-13 para crear un libro.")
     with get_connection() as conn:
         cursor = conn.execute(
             """
@@ -351,7 +372,7 @@ def insert_libro_comun(
                 isbn13,
                 title.strip(),
                 author.strip(),
-                genre.strip(),
+                (genre.strip() or "Sin especificar"),
                 idioma,
                 paginas,
                 cover_path,
@@ -362,15 +383,49 @@ def insert_libro_comun(
         return cursor.lastrowid
 
 
-def add_book_to_user_library(user_id: int, book_id: int, estado: str) -> bool:
+def initial_dates_for_estado(estado: str) -> tuple[Optional[str], Optional[str]]:
+    t = today_iso()
+    if estado == "Leyendo":
+        return t, None
+    if estado == "Terminado":
+        return t, t
+    if estado == "Abandonado":
+        return None, t
+    return None, None
+
+
+def add_book_to_user_library(
+    user_id: int,
+    book_id: int,
+    estado: str,
+    fecha_inicio: Optional[str] = None,
+    fecha_fin: Optional[str] = None,
+    paginas_abandono: Optional[int] = None,
+) -> bool:
+    fi, ff = initial_dates_for_estado(estado)
+    if fecha_inicio is not None:
+        fi = fecha_inicio
+    if fecha_fin is not None:
+        ff = fecha_fin
     try:
         with get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO biblioteca_usuario (user_id, book_id, estado, added_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO biblioteca_usuario (
+                    user_id, book_id, estado, fecha_inicio, fecha_fin,
+                    paginas_leidas_abandono, added_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, book_id, estado, datetime.utcnow().isoformat()),
+                (
+                    user_id,
+                    book_id,
+                    estado,
+                    fi,
+                    ff,
+                    paginas_abandono if estado == "Abandonado" else None,
+                    datetime.utcnow().isoformat(),
+                ),
             )
             conn.commit()
         return True
@@ -378,11 +433,72 @@ def add_book_to_user_library(user_id: int, book_id: int, estado: str) -> bool:
         return False
 
 
-def update_user_book_status(user_id: int, book_id: int, estado: str) -> None:
+def transition_updates(
+    old: str,
+    new: str,
+    cur_fi: Optional[str],
+    cur_ff: Optional[str],
+    today: str,
+    abandon_pages: Optional[int],
+) -> dict[str, Any]:
+    out: dict[str, Any] = {"estado": new}
+    fi, ff = cur_fi, cur_ff
+
+    if new == "Relectura":
+        out["fecha_inicio"] = None
+        out["fecha_fin"] = None
+        out["paginas_leidas_abandono"] = None
+        return out
+
+    if new == "Leyendo":
+        if old == "Leyendo":
+            out["fecha_inicio"] = fi
+        else:
+            out["fecha_inicio"] = today
+        out["fecha_fin"] = None
+        out["paginas_leidas_abandono"] = None
+        return out
+
+    if new == "Terminado":
+        out["fecha_inicio"] = fi or today
+        out["fecha_fin"] = today
+        out["paginas_leidas_abandono"] = None
+        return out
+
+    if new == "Abandonado":
+        out["fecha_inicio"] = fi
+        out["fecha_fin"] = ff or today
+        out["paginas_leidas_abandono"] = abandon_pages
+        return out
+
+    if new == "Pendiente":
+        out["fecha_inicio"] = None
+        out["fecha_fin"] = None
+        out["paginas_leidas_abandono"] = None
+        return out
+
+    out["fecha_inicio"] = fi
+    out["fecha_fin"] = ff
+    out["paginas_leidas_abandono"] = None
+    return out
+
+
+def update_biblioteca_row(
+    user_id: int,
+    book_id: int,
+    estado: str,
+    fecha_inicio: Optional[str],
+    fecha_fin: Optional[str],
+    paginas_abandono: Optional[int],
+) -> None:
     with get_connection() as conn:
         conn.execute(
-            "UPDATE biblioteca_usuario SET estado = ? WHERE user_id = ? AND book_id = ?",
-            (estado, user_id, book_id),
+            """
+            UPDATE biblioteca_usuario
+            SET estado = ?, fecha_inicio = ?, fecha_fin = ?, paginas_leidas_abandono = ?
+            WHERE user_id = ? AND book_id = ?
+            """,
+            (estado, fecha_inicio, fecha_fin, paginas_abandono, user_id, book_id),
         )
         conn.commit()
 
@@ -401,7 +517,10 @@ def get_user_library(user_id: int) -> list[dict[str, Any]]:
                 b.idioma,
                 b.paginas,
                 b.cover_path,
-                bu.estado
+                bu.estado,
+                bu.fecha_inicio,
+                bu.fecha_fin,
+                bu.paginas_leidas_abandono
             FROM biblioteca_usuario bu
             JOIN libros_comunes b ON b.id = bu.book_id
             WHERE bu.user_id = ?
@@ -410,6 +529,52 @@ def get_user_library(user_id: int) -> list[dict[str, Any]]:
             (user_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_reading_statistics(
+    user_id: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    with get_connection() as conn:
+        finished = conn.execute(
+            """
+            SELECT strftime('%Y', bu.fecha_fin) AS anio, COUNT(*) AS libros
+            FROM biblioteca_usuario bu
+            WHERE bu.user_id = ?
+              AND bu.estado = 'Terminado'
+              AND bu.fecha_fin IS NOT NULL AND bu.fecha_fin != ''
+            GROUP BY anio
+            ORDER BY anio DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        pages_done = conn.execute(
+            """
+            SELECT strftime('%Y', bu.fecha_fin) AS anio,
+                   SUM(COALESCE(b.paginas, 0)) AS paginas
+            FROM biblioteca_usuario bu
+            JOIN libros_comunes b ON b.id = bu.book_id
+            WHERE bu.user_id = ?
+              AND bu.estado = 'Terminado'
+              AND bu.fecha_fin IS NOT NULL AND bu.fecha_fin != ''
+            GROUP BY anio
+            ORDER BY anio DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        abandoned = conn.execute(
+            """
+            SELECT strftime('%Y', bu.fecha_fin) AS anio,
+                   SUM(COALESCE(bu.paginas_leidas_abandono, 0)) AS paginas
+            FROM biblioteca_usuario bu
+            WHERE bu.user_id = ?
+              AND bu.estado = 'Abandonado'
+              AND bu.fecha_fin IS NOT NULL AND bu.fecha_fin != ''
+            GROUP BY anio
+            ORDER BY anio DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in finished], [dict(r) for r in pages_done], [dict(r) for r in abandoned]
 
 
 def init_session_state() -> None:
@@ -434,23 +599,24 @@ def login_register_view() -> None:
         locked = now < st.session_state.login_lock_until
         if locked:
             wait = int(st.session_state.login_lock_until - now)
-            st.warning(f"Login bloqueado temporalmente. Intenta de nuevo en {wait} segundos.")
+            st.warning(f"Cuenta bloqueada temporalmente. Vuelve a intentarlo en {wait} segundos.")
+
+        login_mode = st.radio(
+            "Acceder con",
+            ["Nombre de usuario", "Email"],
+            horizontal=True,
+            key="auth_login_mode",
+        )
+        label_ident = "Email" if login_mode == "Email" else "Nombre de usuario"
 
         with st.form("auth_login_form"):
-            login_mode = st.radio(
-                "Acceder con",
-                ["Nombre de usuario", "Email"],
-                horizontal=True,
-                key="auth_login_mode",
-            )
-            identifier_label = "Nombre de usuario" if login_mode == "Nombre de usuario" else "Email"
-            identifier = st.text_input(identifier_label, key="auth_login_identifier")
+            identifier = st.text_input(label_ident, key="auth_login_identifier")
             password = st.text_input("Contrasena", type="password", key="auth_login_password")
             submit = st.form_submit_button("Entrar", disabled=locked)
 
         if submit:
             if not identifier.strip() or not password:
-                st.error("Completa identificador y contrasena.")
+                st.error("Completa el campo de acceso y la contrasena.")
                 return
             mode = "Email" if login_mode == "Email" else "Username"
             user = authenticate_user(mode, identifier, password)
@@ -466,9 +632,9 @@ def login_register_view() -> None:
             if attempts >= 5:
                 st.session_state.login_lock_until = time.time() + LOCK_SECONDS
                 st.session_state.failed_login_attempts = 0
-                st.error("Demasiados intentos fallidos. Login bloqueado temporalmente.")
+                st.error("Demasiados intentos fallidos. Espera unos minutos antes de volver a intentarlo.")
             else:
-                st.error(f"Credenciales invalidas. Intentos restantes: {5 - attempts}.")
+                st.error(f"Credenciales incorrectas. Te quedan {5 - attempts} intentos antes del bloqueo.")
 
     with tab_register:
         with st.form("auth_register_form"):
@@ -495,13 +661,13 @@ def login_register_view() -> None:
             except sqlite3.IntegrityError as err:
                 text = str(err).lower()
                 if "username" in text:
-                    st.error("El nombre de usuario ya existe.")
+                    st.error("Ese nombre de usuario ya esta registrado.")
                 elif "email" in text:
-                    st.error("El email ya existe.")
+                    st.error("Ese correo ya esta registrado.")
                 else:
-                    st.error("No se pudo crear la cuenta por conflicto de datos.")
+                    st.error("No se pudo crear la cuenta por un conflicto de datos.")
             except sqlite3.Error as err:
-                st.error(f"Error de base de datos al registrar usuario: {err}")
+                st.error(f"Error al guardar el usuario: {err}")
 
     with tab_recover:
         with st.form("auth_recover_form"):
@@ -520,24 +686,26 @@ def login_register_view() -> None:
                 return
             try:
                 if recover_password(email, new_password):
-                    st.success("Contrasena actualizada correctamente.")
+                    st.success("Contrasena actualizada. Ya puedes iniciar sesion.")
                 else:
-                    st.error("No existe una cuenta con ese email.")
+                    st.error("No hay ninguna cuenta con ese email.")
             except sqlite3.Error as err:
                 st.error(f"No se pudo actualizar la contrasena: {err}")
 
 
 def add_book_section(user_id: int) -> None:
     st.subheader("Anadir libro")
+    st.caption("No se admiten libros sin ISBN. Indica al menos ISBN-10 o ISBN-13 valido para continuar.")
+
     with st.form("books_lookup_form"):
         col_a, col_b, col_c = st.columns([2, 2, 1])
         with col_a:
-            isbn_10_input = st.text_input("ISBN-10 (opcional)", key="books_lookup_isbn10")
+            isbn_10_input = st.text_input("ISBN-10", key="books_lookup_isbn10")
         with col_b:
-            isbn_13_input = st.text_input("ISBN-13 (opcional)", key="books_lookup_isbn13")
+            isbn_13_input = st.text_input("ISBN-13", key="books_lookup_isbn13")
         with col_c:
-            estado = st.selectbox("Estado", READING_STATES, index=0, key="books_lookup_estado")
-        lookup_clicked = st.form_submit_button("Buscar ISBN")
+            estado = st.selectbox("Estado inicial", READING_STATES, index=0, key="books_lookup_estado")
+        lookup_clicked = st.form_submit_button("Buscar / Continuar")
 
     if lookup_clicked:
         ok10, msg10, isbn10 = validate_isbn10(isbn_10_input)
@@ -549,7 +717,7 @@ def add_book_section(user_id: int) -> None:
             st.error(msg13)
             return
         if not isbn10 and not isbn13:
-            st.error("Debes informar al menos un ISBN valido (10 o 13).")
+            st.error("Debes introducir al menos un ISBN (10 o 13) valido para crear o buscar un libro.")
             return
         existing = find_book_by_isbn(isbn10, isbn13)
         st.session_state.book_flow = {
@@ -571,7 +739,7 @@ def add_book_section(user_id: int) -> None:
 
     if flow["step"] == "found":
         book = flow["existing"]
-        st.info("Libro encontrado en la base comun. Solo se creara vinculo en tu biblioteca.")
+        st.info("Este titulo ya esta en el catalogo comun. Solo se anadira a tu biblioteca.")
         left, right = st.columns([1, 3])
         with left:
             if book["cover_path"] and os.path.exists(book["cover_path"]):
@@ -586,36 +754,46 @@ def add_book_section(user_id: int) -> None:
             st.write(f"**ISBN-13:** {book['isbn_13'] if book['isbn_13'] else '-'}")
         if st.button("Anadir a mi biblioteca", key="books_link_existing"):
             try:
-                linked = add_book_to_user_library(user_id, book["id"], flow["estado"])
+                fi, ff = initial_dates_for_estado(flow["estado"])
+                linked = add_book_to_user_library(
+                    user_id, book["id"], flow["estado"], fi, ff, None
+                )
                 if linked:
                     st.success("Libro anadido a tu biblioteca.")
+                    st.session_state.book_flow = {"step": "idle", "isbn10": None, "isbn13": None, "estado": "Pendiente"}
+                    st.rerun()
                 else:
                     st.warning("Este libro ya estaba en tu biblioteca.")
             except sqlite3.Error as err:
-                st.error(f"No se pudo enlazar el libro: {err}")
+                st.error(f"No se pudo anadir el libro: {err}")
     else:
-        st.warning("Libro no encontrado. Completa los datos para insertar en libros_comunes.")
+        st.warning(
+            "Alta de libro nuevo en el catalogo comun con ISBN obligatorio."
+        )
         with st.form("books_new_book_form"):
             c1, c2 = st.columns(2)
             with c1:
-                title = st.text_input("Titulo", key="books_new_title")
-                author = st.text_input("Autor", key="books_new_author")
-                genre = st.text_input("Genero", key="books_new_genre")
+                title = st.text_input("Titulo *", key="books_new_title")
+                author = st.text_input("Autor *", key="books_new_author")
+                genre = st.text_input("Genero (opcional)", key="books_new_genre")
             with c2:
-                idioma = st.selectbox("Idioma", LANGUAGE_OPTIONS, index=0, key="books_new_idioma")
-                paginas = st.number_input("Paginas", min_value=0, value=0, step=1, key="books_new_paginas")
-                cover = st.file_uploader("Portada (JPG/PNG)", type=["jpg", "jpeg", "png"], key="books_new_cover")
+                idioma = st.selectbox("Idioma *", LANGUAGE_OPTIONS, index=0, key="books_new_idioma")
+                paginas = st.number_input("Paginas (opcional)", min_value=0, value=0, step=1, key="books_new_paginas")
+                cover = st.file_uploader("Portada (opcional, JPG/PNG)", type=["jpg", "jpeg", "png"], key="books_new_cover")
             create_clicked = st.form_submit_button("Guardar libro y anadir a mi biblioteca")
 
         if create_clicked:
-            if not title.strip() or not author.strip() or not genre.strip():
-                st.error("Titulo, autor y genero son obligatorios.")
+            if not title.strip() or not author.strip():
+                st.error("Titulo y autor son obligatorios.")
+                return
+            if not idioma:
+                st.error("Selecciona un idioma.")
                 return
             paginas_value = int(paginas) if paginas > 0 else None
-            reference_isbn = flow["isbn13"] if flow["isbn13"] else flow["isbn10"]
-            cover_path = save_cover_file(reference_isbn, cover)
+            ref = flow["isbn13"] or flow["isbn10"] or "sin_isbn"
+            cover_path = save_cover_file(ref, cover)
             if cover is not None and cover_path is None:
-                st.error("Formato de portada invalido; usa JPG o PNG.")
+                st.error("La portada debe ser JPG o PNG.")
                 return
             try:
                 exists_now = find_book_by_isbn(flow["isbn10"], flow["isbn13"])
@@ -633,20 +811,32 @@ def add_book_section(user_id: int) -> None:
                         cover_path,
                     )
             except sqlite3.IntegrityError:
-                st.error("Conflicto de ISBN detectado. Vuelve a buscar para recuperar los datos existentes.")
+                st.error("Conflicto de ISBN. Vuelve a buscar; puede que el libro ya exista.")
                 return
             except sqlite3.Error as err:
-                st.error(f"Error al guardar en libros_comunes: {err}")
+                st.error(f"Error al guardar en el catalogo: {err}")
                 return
 
             try:
-                linked = add_book_to_user_library(user_id, book_id, flow["estado"])
+                fi, ff = initial_dates_for_estado(flow["estado"])
+                linked = add_book_to_user_library(user_id, book_id, flow["estado"], fi, ff, None)
                 if linked:
-                    st.success("Libro insertado en base comun y anadido a tu biblioteca.")
+                    st.success("Libro creado y anadido a tu biblioteca.")
+                    st.session_state.book_flow = {"step": "idle", "isbn10": None, "isbn13": None, "estado": "Pendiente"}
+                    st.rerun()
                 else:
-                    st.warning("El libro se guardo, pero ya estaba vinculado a tu biblioteca.")
+                    st.warning("El libro esta en el catalogo pero ya lo tenias en tu biblioteca.")
             except sqlite3.Error as err:
-                st.error(f"Libro guardado, pero fallo al vincular en biblioteca_usuario: {err}")
+                st.error(f"El libro se guardo pero no se pudo vincular a tu biblioteca: {err}")
+
+
+def _parse_date(s: Optional[str]) -> Optional[date]:
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        return None
 
 
 def library_view(user_id: int) -> None:
@@ -659,8 +849,9 @@ def library_view(user_id: int) -> None:
     view_mode = st.radio("Vista", ["Lista", "Galeria"], horizontal=True, key="library_view_mode")
     if view_mode == "Lista":
         for book in books:
+            bid = book["book_id"]
             with st.container(border=True):
-                c1, c2, c3 = st.columns([1, 4, 2])
+                c1, c2 = st.columns([1, 4])
                 with c1:
                     if book["cover_path"] and os.path.exists(book["cover_path"]):
                         st.image(book["cover_path"], width=85)
@@ -668,26 +859,116 @@ def library_view(user_id: int) -> None:
                     st.write(f"**{book['title']}**")
                     st.caption(
                         f"{book['author']} · {book['genre']} · {book['idioma']} · "
-                        f"Pags: {book['paginas'] if book['paginas'] is not None else '-'}"
+                        f"Pags. catalogo: {book['paginas'] if book['paginas'] is not None else '-'}"
                     )
                     st.caption(
-                        f"ISBN-10: {book['isbn_10'] if book['isbn_10'] else '-'} | "
-                        f"ISBN-13: {book['isbn_13'] if book['isbn_13'] else '-'}"
+                        f"ISBN-10: {book['isbn_10'] or '-'} | ISBN-13: {book['isbn_13'] or '-'}"
                     )
-                with c3:
-                    new_estado = st.selectbox(
+                    st.caption(
+                        f"Inicio: {book['fecha_inicio'] or '-'} · Fin: {book['fecha_fin'] or '-'} · "
+                        f"Estado: **{book['estado']}**"
+                    )
+                    if book["estado"] == "Abandonado" and book.get("paginas_leidas_abandono") is not None:
+                        st.caption(f"Paginas leidas (abandono): {book['paginas_leidas_abandono']}")
+
+                with st.expander("Gestionar estado y fechas", expanded=False):
+                    cur = book["estado"]
+                    idx = READING_STATES.index(cur) if cur in READING_STATES else 0
+                    new_est = st.selectbox(
                         "Estado",
                         READING_STATES,
-                        index=READING_STATES.index(book["estado"]) if book["estado"] in READING_STATES else 0,
-                        key=f"library_estado_{book['book_id']}",
+                        index=idx,
+                        key=f"library_estado_sel_{bid}",
                     )
-                    if new_estado != book["estado"]:
+                    abandon_pages: Optional[int] = None
+                    if new_est == "Abandonado" or cur == "Abandonado":
+                        abandon_pages = st.number_input(
+                            "Paginas leidas (abandono)",
+                            min_value=0,
+                            value=int(book["paginas_leidas_abandono"] or 0),
+                            step=1,
+                            key=f"library_abandon_pages_{bid}",
+                            help="Obligatorio al pasar a Abandonado. Tambien puedes ajustarlo si el libro ya estaba abandonado.",
+                        )
+                    d_ini = _parse_date(book["fecha_inicio"])
+                    d_fin = _parse_date(book["fecha_fin"])
+                    cdi, cdf = st.columns(2)
+                    with cdi:
+                        edit_ini = st.date_input(
+                            "Fecha de inicio (editable)",
+                            value=d_ini or date.today(),
+                            key=f"library_date_ini_{bid}",
+                        )
+                    with cdf:
+                        edit_fin = st.date_input(
+                            "Fecha de fin (editable)",
+                            value=d_fin or date.today(),
+                            key=f"library_date_fin_{bid}",
+                        )
+                    st.caption(
+                        "**Pendiente -> Leyendo**: se guarda hoy como inicio. **Leyendo -> Terminado**: hoy como fin. "
+                        "**Relectura**: se borran inicio y fin para un nuevo ciclo (luego puedes editarlas). "
+                        "Las fechas de los calendarios prevalecen si solo actualizas fechas sin cambiar estado."
+                    )
+                    if st.button("Guardar cambios", key=f"library_save_{bid}"):
+                        today = today_iso()
+                        fi_w = edit_ini.isoformat()
+                        ff_w = edit_fin.isoformat()
+                        ap_val = int(book.get("paginas_leidas_abandono") or 0)
+                        if new_est == "Abandonado":
+                            ap_val = int(abandon_pages if abandon_pages is not None else 0)
+
                         try:
-                            update_user_book_status(user_id, book["book_id"], new_estado)
-                            st.success("Estado actualizado.")
-                        except sqlite3.Error as err:
-                            st.error(f"No se pudo actualizar el estado: {err}")
-                        st.rerun()
+                            if new_est != cur:
+                                d = transition_updates(
+                                    cur,
+                                    new_est,
+                                    book["fecha_inicio"],
+                                    book["fecha_fin"],
+                                    today,
+                                    ap_val if new_est == "Abandonado" else None,
+                                )
+                                fi: Optional[str] = fi_w
+                                ff: Optional[str] = ff_w
+                                pab: Optional[int] = book.get("paginas_leidas_abandono")
+
+                                if new_est == "Relectura":
+                                    fi, ff, pab = None, None, None
+                                elif new_est == "Leyendo":
+                                    fi = today
+                                    ff = None
+                                    pab = None
+                                elif new_est == "Terminado":
+                                    fi = book["fecha_inicio"] or fi_w or today
+                                    ff = today
+                                    pab = None
+                                elif new_est == "Abandonado":
+                                    pab = ap_val
+                                    fi = book["fecha_inicio"] or fi_w
+                                    ff = ff_w or d.get("fecha_fin") or today
+                                elif new_est == "Pendiente":
+                                    fi, ff, pab = None, None, None
+                                else:
+                                    fi = d.get("fecha_inicio", fi_w)
+                                    ff = d.get("fecha_fin", ff_w)
+                                    pab = d.get("paginas_leidas_abandono")
+
+                                update_biblioteca_row(user_id, bid, new_est, fi, ff, pab)
+                                st.success("Estado y fechas actualizados correctamente.")
+                            else:
+                                if new_est == "Abandonado":
+                                    pab_out = int(
+                                        abandon_pages
+                                        if abandon_pages is not None
+                                        else book.get("paginas_leidas_abandono") or 0
+                                    )
+                                else:
+                                    pab_out = book.get("paginas_leidas_abandono")
+                                update_biblioteca_row(user_id, bid, cur, fi_w, ff_w, pab_out)
+                                st.success("Fechas guardadas correctamente.")
+                            st.rerun()
+                        except sqlite3.Error as e:
+                            st.error(f"No se pudo guardar en la base de datos: {e}")
     else:
         cols = st.columns(4)
         for i, book in enumerate(books):
@@ -698,6 +979,51 @@ def library_view(user_id: int) -> None:
                     st.markdown("*Sin portada*")
                 st.write(f"**{book['title']}**")
                 st.caption(f"{book['author']} · {book['estado']}")
+
+
+def statistics_section(user_id: int) -> None:
+    st.subheader("Estadisticas")
+    finished, pages_done, abandoned = get_reading_statistics(user_id)
+    years: set[str] = set()
+    for row in finished:
+        if row["anio"]:
+            years.add(row["anio"])
+    for row in pages_done:
+        if row["anio"]:
+            years.add(row["anio"])
+    for row in abandoned:
+        if row["anio"]:
+            years.add(row["anio"])
+    libros_por_anio = {r["anio"]: r["libros"] for r in finished if r["anio"]}
+    paginas_terminados = {r["anio"]: int(r["paginas"] or 0) for r in pages_done if r["anio"]}
+    paginas_abandonados = {r["anio"]: int(r["paginas"] or 0) for r in abandoned if r["anio"]}
+
+    if not years:
+        st.info(
+            "Aun no hay datos para estadisticas. Marca libros como **Terminado** (con fecha de fin) "
+            "o **Abandonado** (con paginas leidas y fecha de fin) para ver resumenes por ano."
+        )
+        return
+
+    rows_out = []
+    for y in sorted(years, reverse=True):
+        lt = libros_por_anio.get(y, 0)
+        pt = paginas_terminados.get(y, 0)
+        pa = paginas_abandonados.get(y, 0)
+        rows_out.append(
+            {
+                "Anio": y,
+                "Libros terminados": lt,
+                "Paginas (terminados)": pt,
+                "Paginas (abandonados)": pa,
+                "Paginas totales": pt + pa,
+            }
+        )
+    st.dataframe(rows_out, use_container_width=True, hide_index=True)
+    st.caption(
+        "Los libros terminados cuentan por **fecha_fin**. Las paginas de abandonos usan el valor "
+        "que indicaste al marcar **Abandonado**, tambien asignadas al ano de **fecha_fin**."
+    )
 
 
 def main() -> None:
@@ -722,11 +1048,13 @@ def main() -> None:
     add_book_section(st.session_state.user_id)
     st.divider()
     library_view(st.session_state.user_id)
+    st.divider()
+    statistics_section(st.session_state.user_id)
 
     with st.expander("Nota de migracion"):
         st.markdown(
-            "Si vienes de una version antigua y observas errores de esquema, "
-            "haz copia y luego elimina `biblioteca.db` para regenerarla."
+            "Si algo falla al abrir la base de datos antigua, haz copia de seguridad y borra "
+            "`biblioteca.db` para regenerar el esquema."
         )
 
 
