@@ -1,6 +1,7 @@
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -10,24 +11,21 @@ from passlib.context import CryptContext
 DB_PATH = "biblioteca.db"
 COVERS_DIR = "portadas"
 READING_STATES = ["Pendiente", "Leyendo", "Terminado", "Abandonado", "Relectura"]
-
 LANGUAGE_OPTIONS = [
-    "Español",
-    "Inglés",
-    "Francés",
-    "Alemán",
+    "Espanol",
+    "Ingles",
+    "Frances",
+    "Aleman",
     "Italiano",
-    "Portugués",
-    "Catalán",
+    "Portugues",
+    "Catalan",
     "Gallego",
     "Euskera",
     "Otro",
 ]
-
-EMAIL_PATTERN = re.compile(
-    r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$"
-)
+EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 PASSWORD_SPECIAL_PATTERN = re.compile(r"""[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]""")
+LOCK_SECONDS = 120
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -35,48 +33,84 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    if not _table_exists(conn, table):
+        return set()
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return {r["name"] for r in rows}
 
 
-def _migrate_legacy_books_to_libros_comunes(conn: sqlite3.Connection) -> None:
-    legacy = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='books'"
-    ).fetchone()
-    if not legacy:
+def _migrate_legacy_users(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "users") and not _table_exists(conn, "usuarios"):
+        conn.execute("ALTER TABLE users RENAME TO usuarios")
+    cols = _table_columns(conn, "usuarios")
+    if not cols:
         return
-    count_new = conn.execute("SELECT COUNT(*) AS c FROM libros_comunes").fetchone()["c"]
-    if count_new > 0:
+    if "password_hash" in cols and "password" not in cols:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN password TEXT")
+        conn.execute("UPDATE usuarios SET password = password_hash WHERE password IS NULL")
+    if "email" not in cols:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios(username)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email)")
+
+
+def _migrate_legacy_books(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "libros_comunes")
+    if not cols:
         return
-    legacy_cols = _table_columns(conn, "books")
-    if not legacy_cols:
+    if "isbn" in cols and "isbn_10" not in cols and "isbn_13" not in cols:
+        conn.execute("ALTER TABLE libros_comunes ADD COLUMN isbn_10 TEXT")
+        conn.execute("ALTER TABLE libros_comunes ADD COLUMN isbn_13 TEXT")
+        rows = conn.execute("SELECT id, isbn FROM libros_comunes").fetchall()
+        for row in rows:
+            normalized = normalize_isbn(row["isbn"])
+            if len(normalized) == 10:
+                conn.execute(
+                    "UPDATE libros_comunes SET isbn_10 = ? WHERE id = ?",
+                    (normalized, row["id"]),
+                )
+            elif len(normalized) == 13:
+                conn.execute(
+                    "UPDATE libros_comunes SET isbn_13 = ? WHERE id = ?",
+                    (normalized, row["id"]),
+                )
+    if "idioma" not in cols:
+        conn.execute("ALTER TABLE libros_comunes ADD COLUMN idioma TEXT NOT NULL DEFAULT 'Espanol'")
+    if "paginas" not in cols:
+        conn.execute("ALTER TABLE libros_comunes ADD COLUMN paginas INTEGER")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_libros_isbn10 ON libros_comunes(isbn_10)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_libros_isbn13 ON libros_comunes(isbn_13)")
+
+
+def _migrate_legacy_library(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "user_books") and not _table_exists(conn, "biblioteca_usuario"):
+        conn.execute("ALTER TABLE user_books RENAME TO biblioteca_usuario")
+    cols = _table_columns(conn, "biblioteca_usuario")
+    if not cols:
         return
-    fk_was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-    conn.execute("PRAGMA foreign_keys = OFF")
-    try:
-        has_lang = "language" in legacy_cols
-        has_pages = "page_count" in legacy_cols
-        if has_lang and has_pages:
-            conn.execute(
-                """
-                INSERT INTO libros_comunes (id, isbn, title, author, genre, language, page_count, cover_path, created_at)
-                SELECT id, isbn, title, author, genre, language, page_count, cover_path, created_at FROM books
-                """
-            )
-        else:
-            conn.execute(
-                """
-                INSERT INTO libros_comunes (id, isbn, title, author, genre, language, page_count, cover_path, created_at)
-                SELECT id, isbn, title, author, genre, 'Español', NULL, cover_path, created_at FROM books
-                """
-            )
-        conn.execute("DROP TABLE books")
-    finally:
-        conn.execute(f"PRAGMA foreign_keys = {fk_was_on}")
+    if "estado" not in cols and "status" in cols:
+        conn.execute("ALTER TABLE biblioteca_usuario ADD COLUMN estado TEXT DEFAULT 'Pendiente'")
+        conn.execute(
+            "UPDATE biblioteca_usuario SET estado = status WHERE status IS NOT NULL AND status != ''"
+        )
+    elif "estado" not in cols:
+        conn.execute("ALTER TABLE biblioteca_usuario ADD COLUMN estado TEXT DEFAULT 'Pendiente'")
+    conn.execute(
+        "UPDATE biblioteca_usuario SET estado = 'Pendiente' WHERE estado IS NULL OR estado = ''"
+    )
 
 
 def init_db() -> None:
@@ -84,11 +118,11 @@ def init_db() -> None:
     with get_connection() as conn:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS users (
+            CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
-                email TEXT UNIQUE,
-                password_hash TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
             """
@@ -97,45 +131,36 @@ def init_db() -> None:
             """
             CREATE TABLE IF NOT EXISTS libros_comunes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                isbn TEXT UNIQUE NOT NULL,
+                isbn_10 TEXT UNIQUE,
+                isbn_13 TEXT UNIQUE,
                 title TEXT NOT NULL,
                 author TEXT NOT NULL,
                 genre TEXT NOT NULL,
-                language TEXT NOT NULL,
-                page_count INTEGER,
+                idioma TEXT NOT NULL,
+                paginas INTEGER,
                 cover_path TEXT,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                CHECK (isbn_10 IS NOT NULL OR isbn_13 IS NOT NULL)
             )
             """
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS user_books (
+            CREATE TABLE IF NOT EXISTS biblioteca_usuario (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 book_id INTEGER NOT NULL,
-                status TEXT NOT NULL,
+                estado TEXT NOT NULL DEFAULT 'Pendiente',
                 added_at TEXT NOT NULL,
                 UNIQUE(user_id, book_id),
-                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(user_id) REFERENCES usuarios(id),
                 FOREIGN KEY(book_id) REFERENCES libros_comunes(id)
             )
             """
         )
-
-        user_cols = _table_columns(conn, "users")
-        if "email" not in user_cols:
-            conn.execute("ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
-
-        libro_cols = _table_columns(conn, "libros_comunes")
-        if "language" not in libro_cols:
-            conn.execute(
-                "ALTER TABLE libros_comunes ADD COLUMN language TEXT NOT NULL DEFAULT 'Español'"
-            )
-        if "page_count" not in libro_cols:
-            conn.execute("ALTER TABLE libros_comunes ADD COLUMN page_count INTEGER")
-
-        _migrate_legacy_books_to_libros_comunes(conn)
+        _migrate_legacy_users(conn)
+        _migrate_legacy_books(conn)
+        _migrate_legacy_library(conn)
         conn.commit()
 
 
@@ -172,143 +197,180 @@ def isbn13_check_digit(isbn13: str) -> bool:
     return check == int(isbn13[12])
 
 
-def validate_isbn_format(normalized: str) -> tuple[bool, str]:
+def validate_isbn10(value: str) -> tuple[bool, str, Optional[str]]:
+    normalized = normalize_isbn(value)
     if not normalized:
-        return False, "Introduce un ISBN (10 o 13 caracteres, sin contar guiones o espacios)."
-    if len(normalized) == 10:
-        if isbn10_check_digit(normalized):
-            return True, ""
-        return False, "ISBN-10 inválido: el dígito de control no coincide."
-    if len(normalized) == 13:
-        if isbn13_check_digit(normalized):
-            return True, ""
-        return False, "ISBN-13 inválido: el dígito de control no coincide."
-    return (
-        False,
-        "El ISBN debe tener exactamente 10 caracteres (ISBN-10) o 13 (ISBN-13) tras quitar guiones y espacios.",
-    )
+        return True, "", None
+    if len(normalized) != 10:
+        return False, "El ISBN-10 debe tener 10 caracteres tras limpiar guiones/espacios.", None
+    if not isbn10_check_digit(normalized):
+        return False, "ISBN-10 invalido: el digito de control no coincide.", None
+    return True, "", normalized
+
+
+def validate_isbn13(value: str) -> tuple[bool, str, Optional[str]]:
+    normalized = normalize_isbn(value)
+    if not normalized:
+        return True, "", None
+    if len(normalized) != 13:
+        return False, "El ISBN-13 debe tener 13 digitos tras limpiar guiones/espacios.", None
+    if not isbn13_check_digit(normalized):
+        return False, "ISBN-13 invalido: el digito de control no coincide.", None
+    return True, "", normalized
 
 
 def validate_email(email: str) -> tuple[bool, str]:
-    e = email.strip()
-    if not e:
-        return False, "El correo electrónico es obligatorio."
-    if not EMAIL_PATTERN.match(e):
-        return False, "El correo no tiene un formato válido (ejemplo: nombre@dominio.com)."
+    clean = email.strip().lower()
+    if not clean:
+        return False, "El correo electronico es obligatorio."
+    if not EMAIL_PATTERN.match(clean):
+        return False, "Correo invalido. Usa formato estandar (ejemplo: nombre@dominio.com)."
     return True, ""
 
 
 def validate_password_owasp(password: str) -> tuple[bool, list[str]]:
     errors: list[str] = []
     if len(password) < 8:
-        errors.append("La contraseña debe tener al menos 8 caracteres.")
+        errors.append("La contrasena debe tener minimo 8 caracteres.")
     if not re.search(r"[A-Z]", password):
-        errors.append("La contraseña debe incluir al menos una letra mayúscula.")
+        errors.append("La contrasena debe incluir al menos una mayuscula.")
     if not re.search(r"[a-z]", password):
-        errors.append("La contraseña debe incluir al menos una letra minúscula.")
+        errors.append("La contrasena debe incluir al menos una minuscula.")
     if not re.search(r"\d", password):
-        errors.append("La contraseña debe incluir al menos un número.")
+        errors.append("La contrasena debe incluir al menos un numero.")
     if not PASSWORD_SPECIAL_PATTERN.search(password):
-        errors.append(
-            "La contraseña debe incluir al menos un carácter especial (por ejemplo: !@#$%&*)."
-        )
+        errors.append("La contrasena debe incluir al menos un caracter especial.")
     return len(errors) == 0, errors
 
 
-def save_cover_file(isbn: str, uploaded_file) -> Optional[str]:
+def save_cover_file(reference_isbn: str, uploaded_file) -> Optional[str]:
     if uploaded_file is None:
         return None
-
     _, ext = os.path.splitext(uploaded_file.name.lower())
     if ext not in [".jpg", ".jpeg", ".png"]:
         return None
-
-    safe_isbn = normalize_isbn(isbn) or "sin_isbn"
-    filename = f"{safe_isbn}_{int(datetime.utcnow().timestamp())}{ext}"
+    base = normalize_isbn(reference_isbn) or "sin_isbn"
+    filename = f"{base}_{int(datetime.utcnow().timestamp())}{ext}"
     path = os.path.join(COVERS_DIR, filename)
-
     with open(path, "wb") as output:
         output.write(uploaded_file.getbuffer())
     return path
 
 
 def create_user(username: str, email: str, password: str) -> None:
-    hashed = pwd_context.hash(password)
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO users (username, email, password_hash, created_at)
+            INSERT INTO usuarios (username, email, password, created_at)
             VALUES (?, ?, ?, ?)
             """,
             (
                 username.strip(),
                 email.strip().lower(),
-                hashed,
+                pwd_context.hash(password),
                 datetime.utcnow().isoformat(),
             ),
         )
         conn.commit()
 
 
-def authenticate_user(username: str, password: str) -> Optional[sqlite3.Row]:
+def authenticate_user(login_mode: str, identifier: str, password: str) -> Optional[dict[str, Any]]:
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT id, username, password_hash FROM users WHERE username = ?",
-            (username.strip(),),
-        ).fetchone()
-    if row and pwd_context.verify(password, row["password_hash"]):
-        return row
+        if login_mode == "Email":
+            row = conn.execute(
+                "SELECT id, username, email, password FROM usuarios WHERE email = ?",
+                (identifier.strip().lower(),),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, username, email, password FROM usuarios WHERE username = ?",
+                (identifier.strip(),),
+            ).fetchone()
+    if row and pwd_context.verify(password, row["password"]):
+        return dict(row)
     return None
 
 
-def get_book_by_isbn(isbn: str) -> Optional[sqlite3.Row]:
+def recover_password(email: str, new_password: str) -> bool:
     with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM libros_comunes WHERE isbn = ?", (isbn,)
+        row = conn.execute(
+            "SELECT id FROM usuarios WHERE email = ?",
+            (email.strip().lower(),),
         ).fetchone()
+        if row is None:
+            return False
+        conn.execute(
+            "UPDATE usuarios SET password = ? WHERE id = ?",
+            (pwd_context.hash(new_password), row["id"]),
+        )
+        conn.commit()
+    return True
+
+
+def find_book_by_isbn(isbn10: Optional[str], isbn13: Optional[str]) -> Optional[dict[str, Any]]:
+    with get_connection() as conn:
+        if isbn10 and isbn13:
+            row = conn.execute(
+                "SELECT * FROM libros_comunes WHERE isbn_10 = ? OR isbn_13 = ?",
+                (isbn10, isbn13),
+            ).fetchone()
+        elif isbn10:
+            row = conn.execute(
+                "SELECT * FROM libros_comunes WHERE isbn_10 = ?",
+                (isbn10,),
+            ).fetchone()
+        elif isbn13:
+            row = conn.execute(
+                "SELECT * FROM libros_comunes WHERE isbn_13 = ?",
+                (isbn13,),
+            ).fetchone()
+        else:
+            return None
+    return dict(row) if row else None
 
 
 def insert_libro_comun(
-    isbn: str,
+    isbn10: Optional[str],
+    isbn13: Optional[str],
     title: str,
     author: str,
     genre: str,
-    language: str,
-    page_count: Optional[int],
+    idioma: str,
+    paginas: Optional[int],
     cover_path: Optional[str],
 ) -> int:
     with get_connection() as conn:
-        cur = conn.execute(
+        cursor = conn.execute(
             """
-            INSERT INTO libros_comunes (
-                isbn, title, author, genre, language, page_count, cover_path, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO libros_comunes
+            (isbn_10, isbn_13, title, author, genre, idioma, paginas, cover_path, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                isbn,
+                isbn10,
+                isbn13,
                 title.strip(),
                 author.strip(),
                 genre.strip(),
-                language,
-                page_count,
+                idioma,
+                paginas,
                 cover_path,
                 datetime.utcnow().isoformat(),
             ),
         )
         conn.commit()
-        return cur.lastrowid
+        return cursor.lastrowid
 
 
-def add_book_to_user_library(user_id: int, book_id: int, status: str) -> bool:
+def add_book_to_user_library(user_id: int, book_id: int, estado: str) -> bool:
     try:
         with get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO user_books (user_id, book_id, status, added_at)
+                INSERT INTO biblioteca_usuario (user_id, book_id, estado, added_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                (user_id, book_id, status, datetime.utcnow().isoformat()),
+                (user_id, book_id, estado, datetime.utcnow().isoformat()),
             )
             conn.commit()
         return True
@@ -316,375 +378,343 @@ def add_book_to_user_library(user_id: int, book_id: int, status: str) -> bool:
         return False
 
 
-def update_user_book_status(user_id: int, book_id: int, status: str) -> None:
+def update_user_book_status(user_id: int, book_id: int, estado: str) -> None:
     with get_connection() as conn:
         conn.execute(
-            "UPDATE user_books SET status = ? WHERE user_id = ? AND book_id = ?",
-            (status, user_id, book_id),
+            "UPDATE biblioteca_usuario SET estado = ? WHERE user_id = ? AND book_id = ?",
+            (estado, user_id, book_id),
         )
         conn.commit()
 
 
-def get_user_library(user_id: int) -> list[sqlite3.Row]:
+def get_user_library(user_id: int) -> list[dict[str, Any]]:
     with get_connection() as conn:
-        return conn.execute(
+        rows = conn.execute(
             """
             SELECT
                 b.id AS book_id,
-                b.isbn,
+                b.isbn_10,
+                b.isbn_13,
                 b.title,
                 b.author,
                 b.genre,
-                b.language,
-                b.page_count,
+                b.idioma,
+                b.paginas,
                 b.cover_path,
-                ub.status
-            FROM user_books ub
-            JOIN libros_comunes b ON b.id = ub.book_id
-            WHERE ub.user_id = ?
+                bu.estado
+            FROM biblioteca_usuario bu
+            JOIN libros_comunes b ON b.id = bu.book_id
+            WHERE bu.user_id = ?
             ORDER BY b.title COLLATE NOCASE
             """,
             (user_id,),
         ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def _init_book_flow_state() -> None:
+def init_session_state() -> None:
+    if "user_id" not in st.session_state:
+        st.session_state.user_id = None
+    if "username" not in st.session_state:
+        st.session_state.username = None
+    if "failed_login_attempts" not in st.session_state:
+        st.session_state.failed_login_attempts = 0
+    if "login_lock_until" not in st.session_state:
+        st.session_state.login_lock_until = 0.0
     if "book_flow" not in st.session_state:
-        st.session_state.book_flow = {
-            "step": "lookup",
-            "isbn": None,
-            "status": READING_STATES[1],
-        }
+        st.session_state.book_flow = {"step": "idle", "isbn10": None, "isbn13": None, "estado": "Pendiente"}
 
 
 def login_register_view() -> None:
-    st.title("Mi Estantería Digital")
-    st.caption("Biblioteca personal con catálogo común por ISBN")
-
-    tab_login, tab_register = st.tabs(["Iniciar sesión", "Registro"])
+    st.title("Mi Estanteria Digital")
+    tab_login, tab_register, tab_recover = st.tabs(["Iniciar sesion", "Registro", "Recuperar contrasena"])
 
     with tab_login:
-        with st.form("login_form"):
-            username = st.text_input("Usuario", key="login_user")
-            password = st.text_input("Contraseña", type="password", key="login_pass")
-            submit_login = st.form_submit_button("Entrar")
+        now = time.time()
+        locked = now < st.session_state.login_lock_until
+        if locked:
+            wait = int(st.session_state.login_lock_until - now)
+            st.warning(f"Login bloqueado temporalmente. Intenta de nuevo en {wait} segundos.")
 
-        if submit_login:
-            if not username.strip() or not password:
-                st.error("Debes completar usuario y contraseña.")
+        with st.form("auth_login_form"):
+            login_mode = st.radio(
+                "Acceder con",
+                ["Nombre de usuario", "Email"],
+                horizontal=True,
+                key="auth_login_mode",
+            )
+            identifier_label = "Nombre de usuario" if login_mode == "Nombre de usuario" else "Email"
+            identifier = st.text_input(identifier_label, key="auth_login_identifier")
+            password = st.text_input("Contrasena", type="password", key="auth_login_password")
+            submit = st.form_submit_button("Entrar", disabled=locked)
+
+        if submit:
+            if not identifier.strip() or not password:
+                st.error("Completa identificador y contrasena.")
                 return
-            user = authenticate_user(username, password)
+            mode = "Email" if login_mode == "Email" else "Username"
+            user = authenticate_user(mode, identifier, password)
             if user:
                 st.session_state.user_id = user["id"]
                 st.session_state.username = user["username"]
-                st.success("Sesión iniciada.")
+                st.session_state.failed_login_attempts = 0
+                st.session_state.login_lock_until = 0.0
+                st.success("Sesion iniciada correctamente.")
                 st.rerun()
+            st.session_state.failed_login_attempts += 1
+            attempts = st.session_state.failed_login_attempts
+            if attempts >= 5:
+                st.session_state.login_lock_until = time.time() + LOCK_SECONDS
+                st.session_state.failed_login_attempts = 0
+                st.error("Demasiados intentos fallidos. Login bloqueado temporalmente.")
             else:
-                st.error("Credenciales inválidas.")
+                st.error(f"Credenciales invalidas. Intentos restantes: {5 - attempts}.")
 
     with tab_register:
-        with st.form("register_form"):
-            new_username = st.text_input("Usuario", key="reg_user")
-            new_email = st.text_input("Correo electrónico", key="reg_email")
-            new_password = st.text_input("Contraseña", type="password", key="reg_pass")
+        with st.form("auth_register_form"):
+            new_username = st.text_input("Usuario", key="auth_register_username")
+            new_email = st.text_input("Email", key="auth_register_email")
+            new_password = st.text_input("Contrasena", type="password", key="auth_register_password")
             submit_register = st.form_submit_button("Crear cuenta")
-
         if submit_register:
             if len(new_username.strip()) < 3:
                 st.error("El usuario debe tener al menos 3 caracteres.")
                 return
-            ok_email, email_err = validate_email(new_email)
+            ok_email, msg_email = validate_email(new_email)
             if not ok_email:
-                st.error(email_err)
+                st.error(msg_email)
                 return
-            ok_pw, pw_errors = validate_password_owasp(new_password)
-            if not ok_pw:
-                for msg in pw_errors:
+            ok_password, password_errors = validate_password_owasp(new_password)
+            if not ok_password:
+                for msg in password_errors:
                     st.error(msg)
                 return
             try:
                 create_user(new_username, new_email, new_password)
-            except sqlite3.IntegrityError as e:
-                err = str(e).lower()
-                if "username" in err or "users.username" in err:
-                    st.error("Ese nombre de usuario ya está registrado.")
-                elif "email" in err or "users.email" in err:
-                    st.error("Ese correo electrónico ya está registrado.")
+                st.success("Cuenta creada. Ya puedes iniciar sesion.")
+            except sqlite3.IntegrityError as err:
+                text = str(err).lower()
+                if "username" in text:
+                    st.error("El nombre de usuario ya existe.")
+                elif "email" in text:
+                    st.error("El email ya existe.")
                 else:
-                    st.error("No se pudo crear la cuenta (dato duplicado o error de base de datos).")
+                    st.error("No se pudo crear la cuenta por conflicto de datos.")
+            except sqlite3.Error as err:
+                st.error(f"Error de base de datos al registrar usuario: {err}")
+
+    with tab_recover:
+        with st.form("auth_recover_form"):
+            email = st.text_input("Email registrado", key="auth_recover_email")
+            new_password = st.text_input("Nueva contrasena", type="password", key="auth_recover_password")
+            submit_recover = st.form_submit_button("Actualizar contrasena")
+        if submit_recover:
+            ok_email, msg_email = validate_email(email)
+            if not ok_email:
+                st.error(msg_email)
                 return
-            except sqlite3.Error:
-                st.error("Error al guardar el usuario. Inténtalo de nuevo.")
+            ok_password, password_errors = validate_password_owasp(new_password)
+            if not ok_password:
+                for msg in password_errors:
+                    st.error(msg)
                 return
-            st.success("Cuenta creada correctamente. Ya puedes iniciar sesión.")
+            try:
+                if recover_password(email, new_password):
+                    st.success("Contrasena actualizada correctamente.")
+                else:
+                    st.error("No existe una cuenta con ese email.")
+            except sqlite3.Error as err:
+                st.error(f"No se pudo actualizar la contrasena: {err}")
 
 
 def add_book_section(user_id: int) -> None:
-    _init_book_flow_state()
-    flow: dict[str, Any] = st.session_state.book_flow
+    st.subheader("Anadir libro")
+    with st.form("books_lookup_form"):
+        col_a, col_b, col_c = st.columns([2, 2, 1])
+        with col_a:
+            isbn_10_input = st.text_input("ISBN-10 (opcional)", key="books_lookup_isbn10")
+        with col_b:
+            isbn_13_input = st.text_input("ISBN-13 (opcional)", key="books_lookup_isbn13")
+        with col_c:
+            estado = st.selectbox("Estado", READING_STATES, index=0, key="books_lookup_estado")
+        lookup_clicked = st.form_submit_button("Buscar ISBN")
 
-    st.subheader("Añadir libro por ISBN")
-
-    with st.form("isbn_lookup_form"):
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            isbn_input = st.text_input(
-                "ISBN (ISBN-10 o ISBN-13)",
-                placeholder="978-84-9759-220-8 o 8497592207",
-                key="isbn_lookup_input",
-            )
-        with c2:
-            status = st.selectbox(
-                "Estado de lectura",
-                options=READING_STATES,
-                index=READING_STATES.index(flow["status"])
-                if flow["status"] in READING_STATES
-                else 1,
-                key="isbn_lookup_status",
-            )
-        search_clicked = st.form_submit_button("Buscar ISBN")
-
-    if search_clicked:
-        normalized = normalize_isbn(isbn_input)
-        ok, err_msg = validate_isbn_format(normalized)
-        if not ok:
-            st.error(err_msg)
-            st.session_state.book_flow = {
-                "step": "lookup",
-                "isbn": None,
-                "status": status,
-            }
+    if lookup_clicked:
+        ok10, msg10, isbn10 = validate_isbn10(isbn_10_input)
+        ok13, msg13, isbn13 = validate_isbn13(isbn_13_input)
+        if not ok10:
+            st.error(msg10)
             return
-        existing = get_book_by_isbn(normalized)
+        if not ok13:
+            st.error(msg13)
+            return
+        if not isbn10 and not isbn13:
+            st.error("Debes informar al menos un ISBN valido (10 o 13).")
+            return
+        existing = find_book_by_isbn(isbn10, isbn13)
         st.session_state.book_flow = {
             "step": "found" if existing else "new",
-            "isbn": normalized,
-            "status": status,
-            "existing_row": dict(existing) if existing else None,
+            "isbn10": isbn10,
+            "isbn13": isbn13,
+            "estado": estado,
+            "existing": existing,
         }
         st.rerun()
 
-    flow = st.session_state.book_flow
-    if flow.get("step") == "lookup" or not flow.get("isbn"):
-        st.caption(
-            "Tras buscar, si el ISBN no está en el catálogo común podrás completar los datos "
-            "y guardar; el vínculo a tu biblioteca se crea en el mismo paso."
-        )
+    flow: dict[str, Any] = st.session_state.book_flow
+    if flow["step"] == "idle":
         return
 
-    isbn = flow["isbn"]
-    status_sel = flow["status"]
+    if st.button("Nueva busqueda", key="books_reset_lookup"):
+        st.session_state.book_flow = {"step": "idle", "isbn10": None, "isbn13": None, "estado": "Pendiente"}
+        st.rerun()
 
-    col_reset, _ = st.columns([1, 3])
-    with col_reset:
-        if st.button("Nueva búsqueda", key="reset_book_flow"):
-            st.session_state.book_flow = {
-                "step": "lookup",
-                "isbn": None,
-                "status": READING_STATES[1],
-            }
-            st.rerun()
-
-    if flow["step"] == "found" and flow.get("existing_row"):
-        row = flow["existing_row"]
-        st.info("Este ISBN ya está en **libros comunes**. Se muestran los datos guardados.")
-        d1, d2 = st.columns([1, 3])
-        with d1:
-            if row.get("cover_path") and os.path.exists(row["cover_path"]):
-                st.image(row["cover_path"], width=120)
-        with d2:
-            st.write(f"**Título:** {row['title']}")
-            st.write(f"**Autor:** {row['author']}")
-            st.write(f"**Género:** {row['genre']}")
-            st.write(f"**Idioma:** {row.get('language', '—')}")
-            pages = row.get("page_count")
-            st.write(f"**Páginas:** {pages if pages is not None else '—'}")
-        if st.button("Añadir a mi biblioteca", key=f"link_existing_{isbn}"):
+    if flow["step"] == "found":
+        book = flow["existing"]
+        st.info("Libro encontrado en la base comun. Solo se creara vinculo en tu biblioteca.")
+        left, right = st.columns([1, 3])
+        with left:
+            if book["cover_path"] and os.path.exists(book["cover_path"]):
+                st.image(book["cover_path"], width=120)
+        with right:
+            st.write(f"**Titulo:** {book['title']}")
+            st.write(f"**Autor:** {book['author']}")
+            st.write(f"**Genero:** {book['genre']}")
+            st.write(f"**Idioma:** {book['idioma']}")
+            st.write(f"**Paginas:** {book['paginas'] if book['paginas'] is not None else '-'}")
+            st.write(f"**ISBN-10:** {book['isbn_10'] if book['isbn_10'] else '-'}")
+            st.write(f"**ISBN-13:** {book['isbn_13'] if book['isbn_13'] else '-'}")
+        if st.button("Anadir a mi biblioteca", key="books_link_existing"):
             try:
-                if add_book_to_user_library(user_id, row["id"], status_sel):
-                    st.success("Libro añadido a tu biblioteca.")
-                    st.session_state.book_flow = {
-                        "step": "lookup",
-                        "isbn": None,
-                        "status": status_sel,
-                    }
-                    st.rerun()
+                linked = add_book_to_user_library(user_id, book["id"], flow["estado"])
+                if linked:
+                    st.success("Libro anadido a tu biblioteca.")
                 else:
-                    st.warning("Ese libro ya está en tu biblioteca.")
-            except sqlite3.Error:
-                st.error("No se pudo enlazar el libro. Inténtalo de nuevo.")
+                    st.warning("Este libro ya estaba en tu biblioteca.")
+            except sqlite3.Error as err:
+                st.error(f"No se pudo enlazar el libro: {err}")
+    else:
+        st.warning("Libro no encontrado. Completa los datos para insertar en libros_comunes.")
+        with st.form("books_new_book_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                title = st.text_input("Titulo", key="books_new_title")
+                author = st.text_input("Autor", key="books_new_author")
+                genre = st.text_input("Genero", key="books_new_genre")
+            with c2:
+                idioma = st.selectbox("Idioma", LANGUAGE_OPTIONS, index=0, key="books_new_idioma")
+                paginas = st.number_input("Paginas", min_value=0, value=0, step=1, key="books_new_paginas")
+                cover = st.file_uploader("Portada (JPG/PNG)", type=["jpg", "jpeg", "png"], key="books_new_cover")
+            create_clicked = st.form_submit_button("Guardar libro y anadir a mi biblioteca")
 
-    elif flow["step"] == "new":
-        st.warning(
-            "ISBN no encontrado en **libros comunes**. Completa los datos; se creará el registro "
-            "común y el vínculo a tu biblioteca."
-        )
-        with st.form("create_common_book_form"):
-            r1, r2 = st.columns(2)
-            with r1:
-                title = st.text_input("Título", key="new_title")
-                author = st.text_input("Autor", key="new_author")
-                genre = st.text_input("Género", key="new_genre")
-            with r2:
-                language = st.selectbox(
-                    "Idioma",
-                    options=LANGUAGE_OPTIONS,
-                    index=0,
-                    key="new_language",
-                )
-                page_count = st.number_input(
-                    "Número de páginas",
-                    min_value=0,
-                    value=0,
-                    step=1,
-                    help="0 si aún no lo conoces",
-                    key="new_pages",
-                )
-                cover = st.file_uploader(
-                    "Portada (JPG/PNG)",
-                    type=["jpg", "jpeg", "png"],
-                    key="new_cover",
-                )
-            submit_create = st.form_submit_button(
-                "Guardar libro y añadir a mi biblioteca"
-            )
-
-        if submit_create:
+        if create_clicked:
             if not title.strip() or not author.strip() or not genre.strip():
-                st.error("Título, autor y género son obligatorios.")
+                st.error("Titulo, autor y genero son obligatorios.")
                 return
-            pages_val: Optional[int] = int(page_count) if page_count and page_count > 0 else None
-            cover_path = save_cover_file(isbn, cover)
+            paginas_value = int(paginas) if paginas > 0 else None
+            reference_isbn = flow["isbn13"] if flow["isbn13"] else flow["isbn10"]
+            cover_path = save_cover_file(reference_isbn, cover)
             if cover is not None and cover_path is None:
-                st.error("Formato de imagen no válido. Usa JPG o PNG.")
+                st.error("Formato de portada invalido; usa JPG o PNG.")
                 return
-
             try:
-                again = get_book_by_isbn(isbn)
-                if again:
-                    book_id = again["id"]
+                exists_now = find_book_by_isbn(flow["isbn10"], flow["isbn13"])
+                if exists_now:
+                    book_id = exists_now["id"]
                 else:
                     book_id = insert_libro_comun(
-                        isbn,
+                        flow["isbn10"],
+                        flow["isbn13"],
                         title,
                         author,
                         genre,
-                        language,
-                        pages_val,
+                        idioma,
+                        paginas_value,
                         cover_path,
                     )
             except sqlite3.IntegrityError:
-                st.error(
-                    "Otro usuario registró este ISBN mientras completabas el formulario. "
-                    "Pulsa «Nueva búsqueda» y vuelve a buscar el ISBN."
-                )
+                st.error("Conflicto de ISBN detectado. Vuelve a buscar para recuperar los datos existentes.")
                 return
-            except sqlite3.Error as e:
-                st.error(f"Error al guardar el libro en el catálogo común: {e}")
+            except sqlite3.Error as err:
+                st.error(f"Error al guardar en libros_comunes: {err}")
                 return
 
             try:
-                if add_book_to_user_library(user_id, book_id, status_sel):
-                    st.success(
-                        "Libro guardado en **libros comunes** y añadido a tu biblioteca."
-                    )
-                    st.session_state.book_flow = {
-                        "step": "lookup",
-                        "isbn": None,
-                        "status": status_sel,
-                    }
-                    st.rerun()
+                linked = add_book_to_user_library(user_id, book_id, flow["estado"])
+                if linked:
+                    st.success("Libro insertado en base comun y anadido a tu biblioteca.")
                 else:
-                    st.warning(
-                        "El libro está en el catálogo común, pero ya figuraba en tu biblioteca."
-                    )
-            except sqlite3.Error:
-                st.error("El libro se guardó en el catálogo, pero no se pudo añadir a tu biblioteca.")
-
-
-def _format_pages(pages: Optional[int]) -> str:
-    if pages is None:
-        return "—"
-    return str(pages)
+                    st.warning("El libro se guardo, pero ya estaba vinculado a tu biblioteca.")
+            except sqlite3.Error as err:
+                st.error(f"Libro guardado, pero fallo al vincular en biblioteca_usuario: {err}")
 
 
 def library_view(user_id: int) -> None:
     st.subheader("Mi biblioteca")
     books = get_user_library(user_id)
     if not books:
-        st.info("Todavía no tienes libros en tu biblioteca.")
+        st.info("Aun no tienes libros en tu biblioteca.")
         return
 
-    view_mode = st.radio("Vista", ["Lista", "Galería"], horizontal=True)
-
+    view_mode = st.radio("Vista", ["Lista", "Galeria"], horizontal=True, key="library_view_mode")
     if view_mode == "Lista":
         for book in books:
             with st.container(border=True):
-                col1, col2, col3 = st.columns([1, 4, 2])
-                with col1:
+                c1, c2, c3 = st.columns([1, 4, 2])
+                with c1:
                     if book["cover_path"] and os.path.exists(book["cover_path"]):
-                        st.image(book["cover_path"], width=90)
-                with col2:
+                        st.image(book["cover_path"], width=85)
+                with c2:
                     st.write(f"**{book['title']}**")
-                    st.write(
-                        f"{book['author']} · {book['genre']} · {book.get('language', '')}"
+                    st.caption(
+                        f"{book['author']} · {book['genre']} · {book['idioma']} · "
+                        f"Pags: {book['paginas'] if book['paginas'] is not None else '-'}"
                     )
                     st.caption(
-                        f"ISBN: {book['isbn']} · Págs.: {_format_pages(book.get('page_count'))}"
+                        f"ISBN-10: {book['isbn_10'] if book['isbn_10'] else '-'} | "
+                        f"ISBN-13: {book['isbn_13'] if book['isbn_13'] else '-'}"
                     )
-                with col3:
-                    new_status = st.selectbox(
+                with c3:
+                    new_estado = st.selectbox(
                         "Estado",
                         READING_STATES,
-                        index=READING_STATES.index(book["status"])
-                        if book["status"] in READING_STATES
-                        else 0,
-                        key=f"status_{book['book_id']}",
+                        index=READING_STATES.index(book["estado"]) if book["estado"] in READING_STATES else 0,
+                        key=f"library_estado_{book['book_id']}",
                     )
-                    if new_status != book["status"]:
+                    if new_estado != book["estado"]:
                         try:
-                            update_user_book_status(
-                                user_id, book["book_id"], new_status
-                            )
+                            update_user_book_status(user_id, book["book_id"], new_estado)
                             st.success("Estado actualizado.")
-                        except sqlite3.Error:
-                            st.error("No se pudo actualizar el estado.")
+                        except sqlite3.Error as err:
+                            st.error(f"No se pudo actualizar el estado: {err}")
                         st.rerun()
     else:
         cols = st.columns(4)
         for i, book in enumerate(books):
-            col = cols[i % 4]
-            with col:
+            with cols[i % 4]:
                 if book["cover_path"] and os.path.exists(book["cover_path"]):
                     st.image(book["cover_path"], use_container_width=True)
                 else:
                     st.markdown("*Sin portada*")
                 st.write(f"**{book['title']}**")
-                st.caption(
-                    f"{book['author']} · {book['status']} · {_format_pages(book.get('page_count'))} pág."
-                )
+                st.caption(f"{book['author']} · {book['estado']}")
 
 
 def main() -> None:
-    st.set_page_config(
-        page_title="Mi Estantería Digital", page_icon="📚", layout="wide"
-    )
+    st.set_page_config(page_title="Mi Estanteria Digital", page_icon="📚", layout="wide")
     init_db()
+    init_session_state()
 
-    if "user_id" not in st.session_state:
-        st.session_state.user_id = None
-        st.session_state.username = None
-
-    if not st.session_state.user_id:
+    if st.session_state.user_id is None:
         login_register_view()
         return
 
-    st.title("Mi Estantería Digital")
-    top_col1, top_col2 = st.columns([5, 1])
-    with top_col1:
+    st.title("Mi Estanteria Digital")
+    top_left, top_right = st.columns([5, 1])
+    with top_left:
         st.caption(f"Usuario: {st.session_state.username}")
-    with top_col2:
-        if st.button("Cerrar sesión"):
+    with top_right:
+        if st.button("Cerrar sesion", key="layout_logout_button"):
             st.session_state.user_id = None
             st.session_state.username = None
             st.rerun()
@@ -693,10 +723,10 @@ def main() -> None:
     st.divider()
     library_view(st.session_state.user_id)
 
-    with st.expander("Nota sobre la base de datos"):
+    with st.expander("Nota de migracion"):
         st.markdown(
-            "Si actualizas desde una versión muy antigua y ves errores raros de esquema, "
-            "cierra la app, elimina `biblioteca.db` y vuelve a ejecutar (perderás datos locales de prueba)."
+            "Si vienes de una version antigua y observas errores de esquema, "
+            "haz copia y luego elimina `biblioteca.db` para regenerarla."
         )
 
 
