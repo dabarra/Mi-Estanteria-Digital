@@ -1,4 +1,5 @@
 import re
+import sqlite3
 from typing import Any, Optional
 
 from passlib.context import CryptContext
@@ -57,3 +58,27 @@ def authenticate_user(login_mode: str, identifier: str, password: str) -> Option
 def recover_password(email: str, new_password: str) -> bool:
     new_hash = pwd_context.hash(new_password)
     return update_user_password_by_email(email, new_hash)
+
+
+def create_user_with_feedback(username: str, email: str, password: str) -> tuple[bool, str]:
+    try:
+        create_user(username, email, password)
+        return True, ""
+    except sqlite3.IntegrityError as err:
+        txt = str(err).lower()
+        if "username" in txt:
+            return False, "Ese nombre de usuario ya esta registrado."
+        if "email" in txt:
+            return False, "Ese correo ya esta registrado."
+        return False, "No se pudo crear la cuenta por conflicto de datos."
+    except sqlite3.Error as err:
+        return False, f"Error al guardar el usuario: {err}"
+
+
+def recover_password_with_feedback(email: str, new_password: str) -> tuple[bool, str]:
+    try:
+        if recover_password(email, new_password):
+            return True, ""
+        return False, "No hay ninguna cuenta con ese email."
+    except sqlite3.Error as err:
+        return False, f"No se pudo actualizar la contrasena: {err}"

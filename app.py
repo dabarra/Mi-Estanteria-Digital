@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import time
 from datetime import date
 from typing import Any, Optional
@@ -8,21 +7,29 @@ import streamlit as st
 
 from auth_manager import (
     authenticate_user,
-    create_user,
-    recover_password,
+    create_user_with_feedback,
+    recover_password_with_feedback,
     validate_email,
     validate_password_owasp,
 )
 from database_manager import (
     add_book_to_user_library,
+    add_catalog_book_and_link_user,
     find_book_by_isbn,
     get_reading_statistics,
     get_user_library,
     init_db,
-    insert_libro_comun,
-    update_biblioteca_row,
+    update_library_row_safe,
 )
-from utils import save_cover_file, validate_isbn10, validate_isbn13
+from utils import (
+    initial_dates_for_estado,
+    parse_iso_date,
+    save_cover_file,
+    today_iso,
+    transition_updates,
+    validate_isbn10,
+    validate_isbn13,
+)
 
 READING_STATES = ["Pendiente", "Leyendo", "Terminado", "Abandonado", "Relectura"]
 LANGUAGE_OPTIONS = [
@@ -38,72 +45,6 @@ LANGUAGE_OPTIONS = [
     "Otro",
 ]
 LOCK_SECONDS = 120
-
-
-def today_iso() -> str:
-    return date.today().isoformat()
-
-
-def initial_dates_for_estado(estado: str) -> tuple[Optional[str], Optional[str]]:
-    t = today_iso()
-    if estado == "Leyendo":
-        return t, None
-    if estado == "Terminado":
-        return t, t
-    if estado == "Abandonado":
-        return None, t
-    return None, None
-
-
-def transition_updates(
-    old: str,
-    new: str,
-    cur_fi: Optional[str],
-    cur_ff: Optional[str],
-    today: str,
-    abandon_pages: Optional[int],
-) -> dict[str, Any]:
-    out: dict[str, Any] = {"estado": new}
-    fi, ff = cur_fi, cur_ff
-
-    if new == "Relectura":
-        out["fecha_inicio"] = None
-        out["fecha_fin"] = None
-        out["paginas_leidas_abandono"] = None
-        return out
-    if new == "Leyendo":
-        out["fecha_inicio"] = fi if old == "Leyendo" else today
-        out["fecha_fin"] = None
-        out["paginas_leidas_abandono"] = None
-        return out
-    if new == "Terminado":
-        out["fecha_inicio"] = fi or today
-        out["fecha_fin"] = today
-        out["paginas_leidas_abandono"] = None
-        return out
-    if new == "Abandonado":
-        out["fecha_inicio"] = fi
-        out["fecha_fin"] = ff or today
-        out["paginas_leidas_abandono"] = abandon_pages
-        return out
-    if new == "Pendiente":
-        out["fecha_inicio"] = None
-        out["fecha_fin"] = None
-        out["paginas_leidas_abandono"] = None
-        return out
-    out["fecha_inicio"] = fi
-    out["fecha_fin"] = ff
-    out["paginas_leidas_abandono"] = None
-    return out
-
-
-def _parse_date(s: Optional[str]) -> Optional[date]:
-    if not s:
-        return None
-    try:
-        return date.fromisoformat(s[:10])
-    except ValueError:
-        return None
 
 
 def init_session_state() -> None:
@@ -181,19 +122,11 @@ def login_register_view() -> None:
                 for msg in password_errors:
                     st.error(msg)
                 return
-            try:
-                create_user(new_username, new_email, new_password)
+            ok_reg, reg_msg = create_user_with_feedback(new_username, new_email, new_password)
+            if ok_reg:
                 st.success("Cuenta creada. Ya puedes iniciar sesion.")
-            except sqlite3.IntegrityError as err:
-                txt = str(err).lower()
-                if "username" in txt:
-                    st.error("Ese nombre de usuario ya esta registrado.")
-                elif "email" in txt:
-                    st.error("Ese correo ya esta registrado.")
-                else:
-                    st.error("No se pudo crear la cuenta por conflicto de datos.")
-            except sqlite3.Error as err:
-                st.error(f"Error al guardar el usuario: {err}")
+            else:
+                st.error(reg_msg)
 
     with tab_recover:
         with st.form("auth_recover_form"):
@@ -210,13 +143,11 @@ def login_register_view() -> None:
                 for msg in password_errors:
                     st.error(msg)
                 return
-            try:
-                if recover_password(email, new_password):
-                    st.success("Contrasena actualizada. Ya puedes iniciar sesion.")
-                else:
-                    st.error("No hay ninguna cuenta con ese email.")
-            except sqlite3.Error as err:
-                st.error(f"No se pudo actualizar la contrasena: {err}")
+            ok_rec, rec_msg = recover_password_with_feedback(email, new_password)
+            if ok_rec:
+                st.success("Contrasena actualizada. Ya puedes iniciar sesion.")
+            else:
+                st.error(rec_msg)
 
 
 def add_book_section(user_id: int) -> None:
@@ -300,25 +231,29 @@ def add_book_section(user_id: int) -> None:
         if cover_error:
             st.error(cover_error)
             return
-        try:
-            exists_now = find_book_by_isbn(flow["isbn10"], flow["isbn13"])
-            book_id = exists_now["id"] if exists_now else insert_libro_comun(
-                flow["isbn10"], flow["isbn13"], title, author, genre, idioma, paginas_value, cover_path
-            )
-        except (sqlite3.IntegrityError, ValueError):
-            st.error("Conflicto de ISBN o datos invalidos. Vuelve a buscar antes de guardar.")
-            return
-        except sqlite3.Error as err:
-            st.error(f"Error al guardar en el catalogo: {err}")
-            return
         fi, ff = initial_dates_for_estado(flow["estado"])
-        linked = add_book_to_user_library(user_id, book_id, flow["estado"], fi, ff, None)
-        if linked:
+        outcome, detail = add_catalog_book_and_link_user(
+            user_id,
+            flow["isbn10"],
+            flow["isbn13"],
+            title,
+            author,
+            genre,
+            idioma,
+            paginas_value,
+            cover_path,
+            flow["estado"],
+            fi,
+            ff,
+        )
+        if outcome == "success":
             st.success("Libro creado y anadido a tu biblioteca.")
             st.session_state.book_flow = {"step": "idle", "isbn10": None, "isbn13": None, "estado": "Pendiente"}
             st.rerun()
+        elif outcome == "duplicate_library":
+            st.warning(detail)
         else:
-            st.warning("El libro ya estaba vinculado a tu biblioteca.")
+            st.error(detail)
 
 
 def library_view(user_id: int) -> None:
@@ -358,34 +293,47 @@ def library_view(user_id: int) -> None:
                         step=1,
                         key=f"library_abandon_pages_{bid}",
                     )
-                edit_ini = st.date_input("Fecha inicio", value=_parse_date(book["fecha_inicio"]) or date.today(), key=f"library_date_ini_{bid}")
-                edit_fin = st.date_input("Fecha fin", value=_parse_date(book["fecha_fin"]) or date.today(), key=f"library_date_fin_{bid}")
+                edit_ini = st.date_input(
+                    "Fecha inicio",
+                    value=parse_iso_date(book["fecha_inicio"]) or date.today(),
+                    key=f"library_date_ini_{bid}",
+                )
+                edit_fin = st.date_input(
+                    "Fecha fin",
+                    value=parse_iso_date(book["fecha_fin"]) or date.today(),
+                    key=f"library_date_fin_{bid}",
+                )
                 if st.button("Guardar cambios", key=f"library_save_{bid}"):
                     today = today_iso()
                     fi_w = edit_ini.isoformat()
                     ff_w = edit_fin.isoformat()
-                    try:
-                        if new_est != cur:
-                            d = transition_updates(cur, new_est, book["fecha_inicio"], book["fecha_fin"], today, abandon_pages)
-                            fi, ff, pab = fi_w, ff_w, book.get("paginas_leidas_abandono")
-                            if new_est == "Relectura":
-                                fi, ff, pab = None, None, None
-                            elif new_est == "Leyendo":
-                                fi, ff, pab = today, None, None
-                            elif new_est == "Terminado":
-                                fi, ff, pab = book["fecha_inicio"] or fi_w or today, today, None
-                            elif new_est == "Abandonado":
-                                fi, ff, pab = book["fecha_inicio"] or fi_w, ff_w or d.get("fecha_fin") or today, int(abandon_pages or 0)
-                            elif new_est == "Pendiente":
-                                fi, ff, pab = None, None, None
-                            update_biblioteca_row(user_id, bid, new_est, fi, ff, pab)
-                        else:
-                            pab = int(abandon_pages or 0) if new_est == "Abandonado" else book.get("paginas_leidas_abandono")
-                            update_biblioteca_row(user_id, bid, cur, fi_w, ff_w, pab)
+                    if new_est != cur:
+                        delta = transition_updates(
+                            cur,
+                            new_est,
+                            book["fecha_inicio"],
+                            book["fecha_fin"],
+                            today,
+                            abandon_pages,
+                            form_fi_iso=fi_w,
+                            form_ff_iso=ff_w,
+                        )
+                        ok_save, err_save = update_library_row_safe(
+                            user_id,
+                            bid,
+                            delta["estado"],
+                            delta["fecha_inicio"],
+                            delta["fecha_fin"],
+                            delta["paginas_leidas_abandono"],
+                        )
+                    else:
+                        pab = int(abandon_pages or 0) if cur == "Abandonado" else book["paginas_leidas_abandono"]
+                        ok_save, err_save = update_library_row_safe(user_id, bid, cur, fi_w, ff_w, pab)
+                    if ok_save:
                         st.success("Cambios guardados correctamente.")
                         st.rerun()
-                    except sqlite3.Error as err:
-                        st.error(f"No se pudo guardar en la base de datos: {err}")
+                    else:
+                        st.error(err_save)
 
 
 def statistics_section(user_id: int) -> None:

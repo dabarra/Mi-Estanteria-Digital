@@ -384,3 +384,58 @@ def get_reading_statistics(
             (user_id,),
         ).fetchall()
     return [dict(r) for r in finished], [dict(r) for r in pages_done], [dict(r) for r in abandoned]
+
+
+def add_catalog_book_and_link_user(
+    user_id: int,
+    isbn10: Optional[str],
+    isbn13: Optional[str],
+    title: str,
+    author: str,
+    genre: str,
+    idioma: str,
+    paginas: Optional[int],
+    cover_path: Optional[str],
+    estado: str,
+    fecha_inicio: Optional[str],
+    fecha_fin: Optional[str],
+) -> tuple[str, str]:
+    """
+    Crea fila en libros_comunes si no existe y vincula a biblioteca_usuario.
+    Retorna ("success", ""), ("duplicate_library", mensaje) o ("error", mensaje).
+    """
+    try:
+        exists = find_book_by_isbn(isbn10, isbn13)
+        if exists:
+            book_id = exists["id"]
+        else:
+            book_id = insert_libro_comun(
+                isbn10, isbn13, title, author, genre, idioma, paginas, cover_path
+            )
+        linked = add_book_to_user_library(
+            user_id, book_id, estado, fecha_inicio, fecha_fin, None
+        )
+        if linked:
+            return "success", ""
+        return "duplicate_library", "El libro ya estaba vinculado a tu biblioteca."
+    except (sqlite3.IntegrityError, ValueError):
+        return "error", "Conflicto de ISBN o datos invalidos. Vuelve a buscar antes de guardar."
+    except sqlite3.Error as err:
+        return "error", f"Error al guardar en el catalogo: {err}"
+
+
+def update_library_row_safe(
+    user_id: int,
+    book_id: int,
+    estado: str,
+    fecha_inicio: Optional[str],
+    fecha_fin: Optional[str],
+    paginas_abandono: Optional[int],
+) -> tuple[bool, str]:
+    try:
+        update_biblioteca_row(
+            user_id, book_id, estado, fecha_inicio, fecha_fin, paginas_abandono
+        )
+        return True, ""
+    except sqlite3.Error as err:
+        return False, f"No se pudo guardar en la base de datos: {err}"

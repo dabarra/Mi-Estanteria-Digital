@@ -1,11 +1,80 @@
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 from typing import Any, Optional
 
 from PIL import Image, UnidentifiedImageError
+
+
+def today_iso() -> str:
+    return date.today().isoformat()
+
+
+def parse_iso_date(s: Optional[str]) -> Optional[date]:
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        return None
+
+
+def initial_dates_for_estado(estado: str) -> tuple[Optional[str], Optional[str]]:
+    t = today_iso()
+    if estado == "Leyendo":
+        return t, None
+    if estado == "Terminado":
+        return t, t
+    if estado == "Abandonado":
+        return None, t
+    return None, None
+
+
+def transition_updates(
+    old: str,
+    new: str,
+    cur_fi: Optional[str],
+    cur_ff: Optional[str],
+    today: str,
+    abandon_pages: Optional[int],
+    form_fi_iso: Optional[str] = None,
+    form_ff_iso: Optional[str] = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {"estado": new}
+    fi, ff = cur_fi, cur_ff
+
+    if new == "Relectura":
+        out["fecha_inicio"] = None
+        out["fecha_fin"] = None
+        out["paginas_leidas_abandono"] = None
+        return out
+    if new == "Leyendo":
+        out["fecha_inicio"] = fi if old == "Leyendo" else today
+        out["fecha_fin"] = None
+        out["paginas_leidas_abandono"] = None
+        return out
+    if new == "Terminado":
+        out["fecha_inicio"] = fi or today
+        out["fecha_fin"] = today
+        out["paginas_leidas_abandono"] = None
+        return out
+    if new == "Abandonado":
+        out["fecha_inicio"] = fi or form_fi_iso
+        out["fecha_fin"] = ff or form_ff_iso or today
+        out["paginas_leidas_abandono"] = abandon_pages
+        return out
+    if new == "Pendiente":
+        out["fecha_inicio"] = None
+        out["fecha_fin"] = None
+        out["paginas_leidas_abandono"] = None
+        return out
+    out["fecha_inicio"] = fi
+    out["fecha_fin"] = ff
+    out["paginas_leidas_abandono"] = None
+    return out
+
 
 COVERS_DIR = "portadas"
 MAX_COVER_SIZE_BYTES = 2 * 1024 * 1024
