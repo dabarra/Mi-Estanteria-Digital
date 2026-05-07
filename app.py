@@ -3,11 +3,13 @@ import re
 import sqlite3
 import time
 import uuid
+from io import BytesIO
 from datetime import date, datetime
 from typing import Any, Optional
 
 import streamlit as st
 from passlib.context import CryptContext
+from PIL import Image, UnidentifiedImageError
 
 DB_PATH = "biblioteca.db"
 COVERS_DIR = "portadas"
@@ -27,6 +29,7 @@ LANGUAGE_OPTIONS = [
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 PASSWORD_SPECIAL_PATTERN = re.compile(r"""[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]""")
 LOCK_SECONDS = 120
+MAX_COVER_SIZE_BYTES = 2 * 1024 * 1024
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -257,18 +260,49 @@ def validate_password_owasp(password: str) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
-def save_cover_file(reference_isbn: str, uploaded_file) -> Optional[str]:
+def save_cover_file(reference_isbn: str, uploaded_file) -> tuple[Optional[str], Optional[str]]:
     if uploaded_file is None:
-        return None
-    _, ext = os.path.splitext(uploaded_file.name.lower())
-    if ext not in [".jpg", ".jpeg", ".png"]:
-        return None
-    base = normalize_isbn(reference_isbn) or "sin_isbn"
-    filename = f"{base}_{int(datetime.utcnow().timestamp())}{ext}"
-    path = os.path.join(COVERS_DIR, filename)
-    with open(path, "wb") as output:
-        output.write(uploaded_file.getbuffer())
-    return path
+        return None, None
+
+    raw_bytes = uploaded_file.getvalue()
+    if len(raw_bytes) > MAX_COVER_SIZE_BYTES:
+        return None, "La imagen supera el limite de 2 MB."
+
+    try:
+        with Image.open(BytesIO(raw_bytes)) as probe:
+            probe.verify()
+    except (UnidentifiedImageError, OSError):
+        return None, "El archivo no es una imagen valida o esta corrupto."
+
+    try:
+        with Image.open(BytesIO(raw_bytes)) as img:
+            internal_format = (img.format or "").upper()
+            if internal_format not in {"JPEG", "PNG"}:
+                return None, "Solo se aceptan imagenes reales en formato JPEG o PNG."
+
+            if internal_format == "JPEG" and img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            elif internal_format == "PNG" and img.mode not in ("RGB", "RGBA", "L"):
+                img = img.convert("RGBA")
+
+            safe_ref = re.sub(r"[^A-Z0-9]", "", normalize_isbn(reference_isbn)) or "ISBN"
+            ext = ".jpg" if internal_format == "JPEG" else ".png"
+            filename = f"{safe_ref}_{int(datetime.utcnow().timestamp())}_{uuid.uuid4().hex[:8]}{ext}"
+            filename = os.path.basename(filename)
+            target_path = os.path.join(COVERS_DIR, filename)
+
+            covers_root = os.path.realpath(COVERS_DIR)
+            final_path = os.path.realpath(target_path)
+            if not final_path.startswith(covers_root + os.sep):
+                return None, "Ruta de guardado invalida para la portada."
+
+            save_kwargs: dict[str, Any] = {"format": internal_format}
+            if internal_format == "JPEG":
+                save_kwargs.update({"quality": 90, "optimize": True})
+            img.save(target_path, **save_kwargs)
+            return target_path, None
+    except OSError:
+        return None, "No se pudo procesar la imagen. Intenta con otro archivo JPEG o PNG."
 
 
 
@@ -791,9 +825,9 @@ def add_book_section(user_id: int) -> None:
                 return
             paginas_value = int(paginas) if paginas > 0 else None
             ref = flow["isbn13"] or flow["isbn10"] or "sin_isbn"
-            cover_path = save_cover_file(ref, cover)
-            if cover is not None and cover_path is None:
-                st.error("La portada debe ser JPG o PNG.")
+            cover_path, cover_error = save_cover_file(ref, cover)
+            if cover_error:
+                st.error(cover_error)
                 return
             try:
                 exists_now = find_book_by_isbn(flow["isbn10"], flow["isbn13"])
