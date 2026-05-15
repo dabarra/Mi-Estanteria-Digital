@@ -181,6 +181,20 @@ def get_user_by_email(email: str) -> Optional[dict[str, Any]]:
     return dict(row) if row else None
 
 
+def get_user_by_email_and_username(email: str, username: str) -> Optional[dict[str, Any]]:
+    """Devuelve el usuario solo si email y username pertenecen a la misma fila."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, username, email, password
+            FROM usuarios
+            WHERE email = ? AND username = ?
+            """,
+            (email.strip().lower(), username.strip()),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def update_user_password_by_email(email: str, password_hash: str) -> bool:
     with get_connection() as conn:
         row = conn.execute(
@@ -439,3 +453,101 @@ def update_library_row_safe(
         return True, ""
     except sqlite3.Error as err:
         return False, f"No se pudo guardar en la base de datos: {err}"
+
+
+def user_owns_book(user_id: int, book_id: int) -> bool:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM biblioteca_usuario
+            WHERE user_id = ? AND book_id = ?
+            LIMIT 1
+            """,
+            (user_id, book_id),
+        ).fetchone()
+    return row is not None
+
+
+def update_libro_comun_metadata(
+    user_id: int,
+    book_id: int,
+    title: str,
+    author: str,
+    genre: str,
+    idioma: str,
+    paginas: Optional[int],
+    cover_path: Optional[str],
+    update_cover: bool,
+) -> tuple[bool, str]:
+    """
+    Actualiza metadatos del catalogo comun solo si el libro esta en la biblioteca del usuario.
+    Si update_cover es False, no modifica cover_path.
+    """
+    if not user_owns_book(user_id, book_id):
+        return False, "No se encontro el libro en tu biblioteca."
+    try:
+        with get_connection() as conn:
+            if update_cover and cover_path is not None:
+                conn.execute(
+                    """
+                    UPDATE libros_comunes
+                    SET title = ?, author = ?, genre = ?, idioma = ?, paginas = ?, cover_path = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        title.strip(),
+                        author.strip(),
+                        genre.strip() or "Sin especificar",
+                        idioma,
+                        paginas,
+                        cover_path,
+                        book_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE libros_comunes
+                    SET title = ?, author = ?, genre = ?, idioma = ?, paginas = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        title.strip(),
+                        author.strip(),
+                        genre.strip() or "Sin especificar",
+                        idioma,
+                        paginas,
+                        book_id,
+                    ),
+                )
+            conn.commit()
+        return True, ""
+    except sqlite3.Error as err:
+        return False, f"Error al actualizar el libro: {err}"
+
+
+def get_finished_books_detail_for_year(user_id: int, year: str) -> list[dict[str, Any]]:
+    """Libros terminados en un año (mismos campos visuales que la vista Lista)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                b.id AS book_id,
+                b.title,
+                b.author,
+                b.idioma,
+                b.paginas,
+                b.cover_path,
+                bu.estado,
+                bu.fecha_fin
+            FROM biblioteca_usuario bu
+            JOIN libros_comunes b ON b.id = bu.book_id
+            WHERE bu.user_id = ?
+              AND bu.estado = 'Terminado'
+              AND bu.fecha_fin IS NOT NULL AND bu.fecha_fin != ''
+              AND strftime('%Y', bu.fecha_fin) = ?
+            ORDER BY bu.fecha_fin
+            """,
+            (user_id, year),
+        ).fetchall()
+    return [dict(r) for r in rows]

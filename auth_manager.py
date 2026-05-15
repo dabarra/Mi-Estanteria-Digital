@@ -7,6 +7,7 @@ from passlib.context import CryptContext
 from database_manager import (
     create_user_record,
     get_user_by_email,
+    get_user_by_email_and_username,
     get_user_by_username,
     update_user_password_by_email,
 )
@@ -55,11 +56,6 @@ def authenticate_user(login_mode: str, identifier: str, password: str) -> Option
     return None
 
 
-def recover_password(email: str, new_password: str) -> bool:
-    new_hash = pwd_context.hash(new_password)
-    return update_user_password_by_email(email, new_hash)
-
-
 def create_user_with_feedback(username: str, email: str, password: str) -> tuple[bool, str]:
     try:
         create_user(username, email, password)
@@ -75,10 +71,22 @@ def create_user_with_feedback(username: str, email: str, password: str) -> tuple
         return False, f"Error al guardar el usuario: {err}"
 
 
-def recover_password_with_feedback(email: str, new_password: str) -> tuple[bool, str]:
+def recover_password_with_feedback(email: str, username: str, new_password: str) -> tuple[bool, str]:
+    """
+    Restablece la contraseña solo si email y nombre de usuario coinciden en la misma fila.
+    Rechaza la operación si falta alguno o no pertenecen a la misma cuenta.
+    """
+    clean_email = email.strip().lower()
+    clean_user = username.strip()
+    if not clean_email or not clean_user:
+        return False, "Debes indicar el email y el nombre de usuario registrados."
     try:
-        if recover_password(email, new_password):
+        row = get_user_by_email_and_username(clean_email, clean_user)
+        if row is None:
+            return False, "El email y el nombre de usuario no coinciden con ninguna cuenta registrada."
+        new_hash = pwd_context.hash(new_password)
+        if update_user_password_by_email(clean_email, new_hash):
             return True, ""
-        return False, "No hay ninguna cuenta con ese email."
+        return False, "No se pudo actualizar la contraseña. Vuelve a intentarlo."
     except sqlite3.Error as err:
-        return False, f"No se pudo actualizar la contrasena: {err}"
+        return False, f"No se pudo actualizar la contraseña: {err}"

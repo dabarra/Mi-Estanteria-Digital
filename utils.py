@@ -22,13 +22,10 @@ def parse_iso_date(s: Optional[str]) -> Optional[date]:
 
 
 def initial_dates_for_estado(estado: str) -> tuple[Optional[str], Optional[str]]:
+    """Fechas sugeridas al dar de alta un libro; solo Terminado fija inicio y fin por defecto."""
     t = today_iso()
-    if estado == "Leyendo":
-        return t, None
     if estado == "Terminado":
         return t, t
-    if estado == "Abandonado":
-        return None, t
     return None, None
 
 
@@ -37,11 +34,16 @@ def transition_updates(
     new: str,
     cur_fi: Optional[str],
     cur_ff: Optional[str],
-    today: str,
     abandon_pages: Optional[int],
-    form_fi_iso: Optional[str] = None,
-    form_ff_iso: Optional[str] = None,
+    fi_input: Optional[str],
+    ff_input: Optional[str],
 ) -> dict[str, Any]:
+    """
+    Calcula estado y fechas tras un cambio de estado de lectura.
+
+    fi_input / ff_input: fechas ISO desde el formulario; None indica que el usuario
+    dejó la fecha vacía (sin registrar). Leyendo fuerza siempre fecha_fin nula.
+    """
     out: dict[str, Any] = {"estado": new}
     fi, ff = cur_fi, cur_ff
 
@@ -51,18 +53,18 @@ def transition_updates(
         out["paginas_leidas_abandono"] = None
         return out
     if new == "Leyendo":
-        out["fecha_inicio"] = fi if old == "Leyendo" else today
+        out["fecha_inicio"] = fi_input if fi_input is not None else (fi if old == "Leyendo" else None)
         out["fecha_fin"] = None
         out["paginas_leidas_abandono"] = None
         return out
     if new == "Terminado":
-        out["fecha_inicio"] = fi or today
-        out["fecha_fin"] = today
+        out["fecha_inicio"] = fi_input if fi_input is not None else fi
+        out["fecha_fin"] = ff_input if ff_input is not None else ff
         out["paginas_leidas_abandono"] = None
         return out
     if new == "Abandonado":
-        out["fecha_inicio"] = fi or form_fi_iso
-        out["fecha_fin"] = ff or form_ff_iso or today
+        out["fecha_inicio"] = fi_input if fi_input is not None else fi
+        out["fecha_fin"] = ff_input if ff_input is not None else ff
         out["paginas_leidas_abandono"] = abandon_pages
         return out
     if new == "Pendiente":
@@ -70,8 +72,8 @@ def transition_updates(
         out["fecha_fin"] = None
         out["paginas_leidas_abandono"] = None
         return out
-    out["fecha_inicio"] = fi
-    out["fecha_fin"] = ff
+    out["fecha_inicio"] = fi_input if fi_input is not None else fi
+    out["fecha_fin"] = ff_input if ff_input is not None else ff
     out["paginas_leidas_abandono"] = None
     return out
 
