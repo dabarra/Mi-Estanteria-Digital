@@ -36,6 +36,10 @@ from utils import (
 )
 
 READING_STATES = ["Pendiente", "Leyendo", "Terminado", "Abandonado", "Relectura"]
+NAV_LIBRARY = "📚 Mi biblioteca"
+NAV_ADD_BOOK = "✨ Añadir libro"
+NAV_STATISTICS = "📊 Estadísticas"
+NAV_OPTIONS = [NAV_LIBRARY, NAV_ADD_BOOK, NAV_STATISTICS]
 LANGUAGE_OPTIONS = [
     "Espanol",
     "Ingles",
@@ -70,6 +74,10 @@ def inject_app_theme() -> None:
                 --shadow-hover: 0 10px 24px rgba(30, 58, 95, 0.14);
                 --radius-card: 12px;
                 --radius-btn: 10px;
+                --bg-sidebar: #e8e4dc;
+                --bg-sidebar-active: #dce4ed;
+                --sidebar-active-border: #1e3a5f;
+                --sidebar-hover: rgba(30, 58, 95, 0.06);
             }
             .stApp {
                 background: linear-gradient(165deg, #f7f5f0 0%, #ebe6dc 45%, #f4f1eb 100%);
@@ -267,6 +275,110 @@ def inject_app_theme() -> None:
                 text-align: center;
                 line-height: 1.3;
                 margin: 0;
+            }
+            section[data-testid="stSidebar"] {
+                background: linear-gradient(180deg, var(--bg-sidebar) 0%, #e2ded6 100%) !important;
+                border-right: 1px solid var(--card-border) !important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+                padding: 0.25rem 0.5rem 1rem;
+            }
+            section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+                display: flex;
+                flex-direction: column;
+                min-height: calc(100vh - 5rem);
+                padding: 1.35rem 0.85rem 1.5rem;
+            }
+            section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > [data-testid="stVerticalBlock"] {
+                flex: 1 1 auto;
+                display: flex;
+                flex-direction: column;
+                gap: 0.15rem;
+            }
+            section[data-testid="stSidebar"] .sidebar-welcome {
+                font-family: "Inter", "Segoe UI", Roboto, sans-serif;
+                font-size: 1.05rem;
+                font-weight: 500;
+                color: var(--text-primary);
+                margin: 0 0 1.35rem 0;
+                line-height: 1.45;
+                letter-spacing: -0.01em;
+            }
+            section[data-testid="stSidebar"] .sidebar-welcome strong {
+                font-weight: 700;
+                color: var(--accent-slate);
+            }
+            section[data-testid="stSidebar"] [data-testid="stRadio"] {
+                margin-bottom: 0.5rem;
+            }
+            section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] {
+                display: flex;
+                flex-direction: column;
+                gap: 0.4rem;
+                width: 100%;
+            }
+            section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label {
+                display: flex !important;
+                align-items: center;
+                width: 100%;
+                margin: 0 !important;
+                padding: 0.72rem 0.9rem 0.72rem 0.75rem !important;
+                border-radius: 10px !important;
+                border-left: 3px solid transparent !important;
+                background: transparent !important;
+                cursor: pointer !important;
+                transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
+                font-family: "Inter", "Segoe UI", Roboto, sans-serif !important;
+                font-size: 0.95rem !important;
+                font-weight: 500 !important;
+                color: var(--text-primary) !important;
+                box-sizing: border-box;
+            }
+            section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:hover {
+                background: var(--sidebar-hover) !important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {
+                background: var(--bg-sidebar-active) !important;
+                border-left-color: var(--sidebar-active-border) !important;
+                box-shadow: inset 0 0 0 1px rgba(30, 58, 95, 0.08) !important;
+                font-weight: 600 !important;
+                color: var(--text-primary) !important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stRadio"] input[type="radio"] {
+                position: absolute !important;
+                opacity: 0 !important;
+                width: 0 !important;
+                height: 0 !important;
+                margin: 0 !important;
+                pointer-events: none !important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stRadio"] [data-baseweb="radio"] {
+                display: none !important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label > div:first-child {
+                display: none !important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"]:last-child {
+                margin-top: auto !important;
+                padding-top: 1.75rem !important;
+                border-top: 1px solid rgba(30, 58, 95, 0.12);
+            }
+            section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"]:last-child .stButton > button {
+                width: 100%;
+                font-family: "Inter", "Segoe UI", Roboto, sans-serif !important;
+                font-weight: 600 !important;
+                font-size: 0.9rem !important;
+                padding: 0.55rem 1rem !important;
+                border-radius: var(--radius-btn) !important;
+                border: 1px solid var(--card-border) !important;
+                background: var(--card-bg) !important;
+                color: var(--text-secondary) !important;
+                box-shadow: var(--shadow-soft) !important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"]:last-child .stButton > button:hover {
+                color: var(--text-primary) !important;
+                border-color: var(--accent-slate) !important;
+                background: #fffdf9 !important;
             }
             </style>
             """
@@ -884,7 +996,7 @@ def main() -> None:
         page_title="Mi Estanteria Digital",
         page_icon="📚",
         layout="wide",
-        initial_sidebar_state="collapsed",
+        initial_sidebar_state="expanded",
     )
     inject_app_theme()
     init_db()
@@ -893,19 +1005,34 @@ def main() -> None:
         login_register_view()
         return
 
-    st.title("Mi Estanteria Digital")
-    if st.button("Cerrar sesion", key="layout_logout_button"):
-        st.session_state.user_id = None
-        st.session_state.username = None
-        st.session_state.editing_book_id = None
-        st.session_state.managing_status_book_id = None
-        st.rerun()
+    user_id = st.session_state.user_id
+    username = st.session_state.username or "usuario"
 
-    add_book_section(st.session_state.user_id)
-    st.divider()
-    library_view(st.session_state.user_id)
-    st.divider()
-    statistics_section(st.session_state.user_id)
+    with st.sidebar:
+        st.markdown(
+            f'<p class="sidebar-welcome">Bienvenido, <strong>{html.escape(username)}</strong></p>',
+            unsafe_allow_html=True,
+        )
+        section = st.radio(
+            "",
+            NAV_OPTIONS,
+            key="main_nav_section",
+            label_visibility="collapsed",
+        )
+        if st.button("Cerrar sesion", key="layout_logout_button"):
+            st.session_state.user_id = None
+            st.session_state.username = None
+            st.session_state.editing_book_id = None
+            st.session_state.managing_status_book_id = None
+            st.rerun()
+
+    st.title("Mi Estanteria Digital")
+    if section == NAV_LIBRARY:
+        library_view(user_id)
+    elif section == NAV_ADD_BOOK:
+        add_book_section(user_id)
+    else:
+        statistics_section(user_id)
 
 
 if __name__ == "__main__":
