@@ -3,6 +3,7 @@ import html
 import os
 import time
 from datetime import date
+from textwrap import dedent
 from typing import Any, Optional
 
 import streamlit as st
@@ -48,6 +49,231 @@ LANGUAGE_OPTIONS = [
     "Otro",
 ]
 LOCK_SECONDS = 120
+
+def inject_app_theme() -> None:
+    """Inyecta el tema visual global (HTML/CSS invisible en pantalla)."""
+    st.markdown(
+        dedent(
+            """
+            <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+            :root {
+                --text-primary: #1e3a5f;
+                --text-secondary: #4a6278;
+                --bg-page: #f4f1eb;
+                --card-bg: #fffdf9;
+                --card-border: #e8e2d6;
+                --accent-bronze: #b8860b;
+                --accent-gold: #c9a227;
+                --accent-slate: #5c7a9a;
+                --shadow-soft: 0 4px 14px rgba(30, 58, 95, 0.08);
+                --shadow-hover: 0 10px 24px rgba(30, 58, 95, 0.14);
+                --radius-card: 12px;
+                --radius-btn: 10px;
+            }
+            .stApp {
+                background: linear-gradient(165deg, #f7f5f0 0%, #ebe6dc 45%, #f4f1eb 100%);
+                color: var(--text-primary);
+            }
+            .stApp h1, .stApp h2, .stApp h3, [data-testid="stHeader"] {
+                font-family: "Inter", "Segoe UI", Roboto, sans-serif !important;
+                color: var(--text-primary) !important;
+                letter-spacing: -0.02em;
+            }
+            .stApp h1 {
+                font-weight: 700 !important;
+                border-bottom: 2px solid var(--accent-gold);
+                padding-bottom: 0.35rem;
+                margin-bottom: 1.25rem !important;
+            }
+            .stApp h2, .stApp h3 {
+                font-weight: 600 !important;
+                color: var(--accent-slate) !important;
+            }
+            p, label, .stMarkdown div p, .stCaption,
+            [data-testid="stWidgetLabel"] p,
+            .stTextInput label, .stNumberInput label, .stSelectbox label,
+            .stDateInput label, .stCheckbox label, .stRadio label {
+                font-family: "Inter", "Segoe UI", Roboto, sans-serif !important;
+            }
+            [data-testid="stMainBlockContainer"] {
+                padding-top: 1.5rem;
+                padding-bottom: 2.5rem;
+                max-width: 1200px;
+            }
+            [data-testid="stVerticalBlock"] > div:has(> [data-testid="stVerticalBlockBorderWrapper"]) {
+                margin-bottom: 1rem;
+            }
+            [data-testid="stVerticalBlockBorderWrapper"] {
+                background: var(--card-bg) !important;
+                border: 1px solid var(--card-border) !important;
+                border-radius: var(--radius-card) !important;
+                box-shadow: var(--shadow-soft) !important;
+                padding: 1.1rem 1.25rem 1.25rem !important;
+                margin-bottom: 1rem !important;
+                transition: box-shadow 0.25s ease, transform 0.25s ease;
+            }
+            [data-testid="stVerticalBlockBorderWrapper"]:hover {
+                box-shadow: var(--shadow-hover) !important;
+            }
+            hr {
+                margin: 2rem 0 !important;
+                border: none !important;
+                height: 1px !important;
+                background: linear-gradient(90deg, transparent, rgba(184, 134, 11, 0.35) 20%, rgba(92, 122, 154, 0.35) 80%, transparent) !important;
+            }
+            [data-baseweb="tab-list"] {
+                gap: 0.75rem !important;
+                border-bottom: 2px solid var(--card-border) !important;
+                padding-bottom: 0.25rem !important;
+            }
+            [data-baseweb="tab"] {
+                font-family: "Inter", "Segoe UI", Roboto, sans-serif !important;
+                font-size: 1.05rem !important;
+                font-weight: 600 !important;
+                color: var(--text-secondary) !important;
+                padding: 0.65rem 1.25rem !important;
+                border-radius: 8px 8px 0 0 !important;
+            }
+            [data-baseweb="tab"][aria-selected="true"] {
+                color: var(--text-primary) !important;
+                border-bottom: 3px solid var(--accent-bronze) !important;
+                background: rgba(255, 253, 249, 0.85) !important;
+            }
+            .stButton > button {
+                font-family: "Inter", "Segoe UI", Roboto, sans-serif !important;
+                font-weight: 600 !important;
+                border-radius: var(--radius-btn) !important;
+                border: 1px solid var(--accent-slate) !important;
+                color: var(--text-primary) !important;
+                background: #fff !important;
+                padding: 0.45rem 1.1rem !important;
+                transition: all 0.2s ease !important;
+            }
+            .stButton > button:hover {
+                border-color: var(--accent-bronze) !important;
+                color: var(--accent-bronze) !important;
+                box-shadow: var(--shadow-soft) !important;
+            }
+            .stButton > button[kind="primary"],
+            .stFormSubmitButton > button,
+            button[data-testid="baseButton-primary"] {
+                background: linear-gradient(135deg, #2c4a6e 0%, #1e3a5f 100%) !important;
+                color: #fffdf9 !important;
+                border: none !important;
+                box-shadow: 0 4px 12px rgba(30, 58, 95, 0.25) !important;
+            }
+            .stButton > button[kind="primary"]:hover,
+            .stFormSubmitButton > button:hover {
+                background: linear-gradient(135deg, #3d5f82 0%, #2c4a6e 100%) !important;
+                box-shadow: var(--shadow-hover) !important;
+                transform: translateY(-1px);
+            }
+            .gallery-tile {
+                margin-bottom: 1.25rem;
+                background: var(--card-bg);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-card);
+                box-shadow: var(--shadow-soft);
+                padding: 0.75rem 0.75rem 1rem;
+                transition: transform 0.28s ease, box-shadow 0.28s ease;
+                cursor: default;
+            }
+            .gallery-tile:hover {
+                transform: translateY(-4px);
+                box-shadow: var(--shadow-hover);
+            }
+            .gallery-frame {
+                height: 250px;
+                width: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: linear-gradient(180deg, #faf8f4 0%, #f0ebe3 100%);
+                border-radius: 10px;
+                border: 1px solid var(--card-border);
+                overflow: hidden;
+            }
+            .gallery-cover-img {
+                max-height: 100%;
+                max-width: 100%;
+                width: auto;
+                height: auto;
+                object-fit: contain;
+                display: block;
+            }
+            .gallery-book-title {
+                font-weight: 600;
+                margin-top: 0.55rem;
+                font-size: 0.95rem;
+                color: var(--text-primary);
+                line-height: 1.35;
+            }
+            .gallery-placeholder {
+                height: 250px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 1px dashed var(--accent-slate);
+                border-radius: 10px;
+                color: var(--text-secondary);
+                font-size: 0.9rem;
+                background: #faf8f4;
+            }
+            [data-testid="stDataFrame"] {
+                border-radius: var(--radius-card);
+                overflow: hidden;
+                box-shadow: var(--shadow-soft);
+            }
+            [data-testid="stRadio"] label,
+            [data-testid="stSelectbox"] label {
+                color: var(--text-secondary) !important;
+                font-weight: 500 !important;
+            }
+            .lista-cover-slot,
+            .placeholder-lista {
+                width: 80px;
+                height: 115px;
+                flex-shrink: 0;
+                box-sizing: border-box;
+            }
+            .lista-cover-slot {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #faf8f4;
+                border: 1px solid var(--card-border);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            .lista-cover-img {
+                width: 80px;
+                height: 115px;
+                object-fit: contain;
+                display: block;
+            }
+            .placeholder-lista {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #f5f0e8;
+                border: 1px solid var(--card-border);
+                border-radius: 8px;
+                color: var(--text-secondary);
+                font-family: "Inter", "Segoe UI", Roboto, sans-serif;
+                font-size: 0.72rem;
+                font-weight: 500;
+                letter-spacing: 0.02em;
+                text-align: center;
+                line-height: 1.3;
+                margin: 0;
+            }
+            </style>
+            """
+        ).strip(),
+        unsafe_allow_html=True,
+    )
+
 
 
 def _login_lock_key(login_mode_label: str, identifier: str) -> str:
@@ -95,38 +321,20 @@ def _cover_gallery_html(cover_path: str, alt: str) -> str:
 
 
 
-def _inject_gallery_css() -> None:
-    st.markdown(
-        """
-        <style>
-        .gallery-tile { margin-bottom: 1rem; }
-        .gallery-frame {
-            height: 250px;
-            width: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #f4f4f5;
-            border-radius: 8px;
-            border: 1px solid #e0e0e0;
-            overflow: hidden;
-        }
-        .gallery-cover-img {
-            max-height: 100%;
-            max-width: 100%;
-            width: auto;
-            height: auto;
-            object-fit: contain;
-            display: block;
-        }
-        .gallery-book-title {
-            font-weight: 600;
-            margin-top: 0.4rem;
-            font-size: 0.95rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+def _list_cover_placeholder_html() -> str:
+    return '<div class="placeholder-lista">Sin portada</div>'
+
+
+def _list_cover_image_html(cover_path: str, alt: str) -> str:
+    safe_alt = html.escape(alt)
+    with open(cover_path, "rb") as f:
+        b64 = base64.standard_b64encode(f.read()).decode("ascii")
+    ext = cover_path.lower().rsplit(".", 1)[-1]
+    mime = "image/jpeg" if ext in ("jpg", "jpeg") else "image/png"
+    return (
+        f'<div class="lista-cover-slot">'
+        f'<img src="data:{mime};base64,{b64}" alt="{safe_alt}" class="lista-cover-img" />'
+        f"</div>"
     )
 
 
@@ -137,13 +345,13 @@ def render_book_list_row(book: dict[str, Any]) -> None:
     ptxt = f"{int(total_pags)} pág." if tiene_paginas else "Páginas: —"
     idioma = book.get("idioma") or "—"
     estado = book.get("estado") or "—"
-    col_cover, col_info = st.columns([0.2, 0.8])
+    col_cover, col_info = st.columns([0.15, 0.85], vertical_alignment="center")
     with col_cover:
         cover = book.get("cover_path")
         if cover and os.path.exists(cover):
-            st.image(cover, width=100)
+            st.markdown(_list_cover_image_html(cover, book["title"]), unsafe_allow_html=True)
         else:
-            st.caption("Sin\nportada")
+            st.markdown(_list_cover_placeholder_html(), unsafe_allow_html=True)
     with col_info:
         st.markdown(
             f"**{book['title']}**  \n"
@@ -162,112 +370,125 @@ def init_session_state() -> None:
         st.session_state.locks_dict = {}
     if "book_flow" not in st.session_state:
         st.session_state.book_flow = {"step": "idle", "isbn10": None, "isbn13": None, "estado": "Pendiente"}
-    if "library_editing_id" not in st.session_state:
-        st.session_state.library_editing_id = None
     if "editing_book_id" not in st.session_state:
         st.session_state.editing_book_id = None
+    if "managing_status_book_id" not in st.session_state:
+        st.session_state.managing_status_book_id = None
 
 
 def login_register_view() -> None:
-    st.title("Mi Estanteria Digital")
-    tab_login, tab_register, tab_recover = st.tabs(["Iniciar sesion", "Registro", "Recuperar contrasena"])
-
-    with tab_login:
-        login_mode = st.radio(
-            "Acceder con",
-            ["Nombre de usuario", "Email"],
-            horizontal=True,
-            key="auth_login_mode",
+    col_izq, col_centro, col_der = st.columns([1, 2, 1])
+    with col_centro:
+        st.title("Mi Estanteria Digital")
+        tab_login, tab_register, tab_recover = st.tabs(
+            ["Iniciar sesion", "Registro", "Recuperar contrasena"]
         )
-        ident_preview = (st.session_state.get("auth_login_identifier") or "").strip()
-        lock_key_preview = _login_lock_key(login_mode, ident_preview)
-        locked = _login_is_locked(lock_key_preview)
 
-        if locked and lock_key_preview:
-            wait = int(st.session_state.locks_dict[lock_key_preview] - time.time())
-            st.warning(f"Cuenta bloqueada temporalmente. Vuelve a intentarlo en {max(wait, 0)} segundos.")
+        with tab_login:
+            login_mode = st.radio(
+                "Acceder con",
+                ["Nombre de usuario", "Email"],
+                horizontal=True,
+                key="auth_login_mode",
+            )
+            ident_preview = (st.session_state.get("auth_login_identifier") or "").strip()
+            lock_key_preview = _login_lock_key(login_mode, ident_preview)
+            locked = _login_is_locked(lock_key_preview)
 
-        label_ident = "Email" if login_mode == "Email" else "Nombre de usuario"
-        with st.form("auth_login_form"):
-            identifier = st.text_input(label_ident, key="auth_login_identifier")
-            password = st.text_input("Contrasena", type="password", key="auth_login_password")
-            submit = st.form_submit_button("Entrar")
-        if submit:
-            if not identifier.strip() or not password:
-                st.error("Completa el campo de acceso y la contrasena.")
-                return
-            lk = _login_lock_key(login_mode, identifier)
-            if _login_is_locked(lk):
-                st.error("Esta cuenta sigue bloqueada por intentos fallidos. Espera antes de volver a intentarlo.")
-                return
-            mode = "Email" if login_mode == "Email" else "Username"
-            user = authenticate_user(mode, identifier, password)
-            if user:
-                _login_clear_lock(lk)
-                st.session_state.user_id = user["id"]
-                st.session_state.username = user["username"]
-                st.success("Sesion iniciada correctamente.")
-                st.rerun()
-            attempts = _login_failed_increment(lk)
-            if attempts >= 5:
-                st.session_state.locks_dict[lk] = time.time() + LOCK_SECONDS
-                st.session_state.login_failed_counts[lk] = 0
-                st.error("Demasiados intentos fallidos. Esta cuenta queda bloqueada temporalmente.")
-            else:
-                st.error(f"Credenciales incorrectas. Te quedan {5 - attempts} intentos antes del bloqueo.")
+            if locked and lock_key_preview:
+                wait = int(st.session_state.locks_dict[lock_key_preview] - time.time())
+                st.warning(
+                    f"Cuenta bloqueada temporalmente. Vuelve a intentarlo en {max(wait, 0)} segundos."
+                )
 
-    with tab_register:
-        with st.form("auth_register_form"):
-            new_username = st.text_input("Usuario", key="auth_register_username")
-            new_email = st.text_input("Email", key="auth_register_email")
-            new_password = st.text_input("Contrasena", type="password", key="auth_register_password")
-            submit_register = st.form_submit_button("Crear cuenta")
-        if submit_register:
-            if len(new_username.strip()) < 3:
-                st.error("El usuario debe tener al menos 3 caracteres.")
-                return
-            ok_email, msg_email = validate_email(new_email)
-            if not ok_email:
-                st.error(msg_email)
-                return
-            ok_password, password_errors = validate_password_owasp(new_password)
-            if not ok_password:
-                for msg in password_errors:
-                    st.error(msg)
-                return
-            ok_reg, reg_msg = create_user_with_feedback(new_username, new_email, new_password)
-            if ok_reg:
-                st.success("Cuenta creada. Ya puedes iniciar sesion.")
-            else:
-                st.error(reg_msg)
+            label_ident = "Email" if login_mode == "Email" else "Nombre de usuario"
+            with st.form("auth_login_form"):
+                identifier = st.text_input(label_ident, key="auth_login_identifier")
+                password = st.text_input("Contrasena", type="password", key="auth_login_password")
+                submit = st.form_submit_button("Entrar", use_container_width=True)
+            if submit:
+                if not identifier.strip() or not password:
+                    st.error("Completa el campo de acceso y la contrasena.")
+                    return
+                lk = _login_lock_key(login_mode, identifier)
+                if _login_is_locked(lk):
+                    st.error(
+                        "Esta cuenta sigue bloqueada por intentos fallidos. "
+                        "Espera antes de volver a intentarlo."
+                    )
+                    return
+                mode = "Email" if login_mode == "Email" else "Username"
+                user = authenticate_user(mode, identifier, password)
+                if user:
+                    _login_clear_lock(lk)
+                    st.session_state.user_id = user["id"]
+                    st.session_state.username = user["username"]
+                    st.success("Sesion iniciada correctamente.")
+                    st.rerun()
+                attempts = _login_failed_increment(lk)
+                if attempts >= 5:
+                    st.session_state.locks_dict[lk] = time.time() + LOCK_SECONDS
+                    st.session_state.login_failed_counts[lk] = 0
+                    st.error(
+                        "Demasiados intentos fallidos. Esta cuenta queda bloqueada temporalmente."
+                    )
+                else:
+                    st.error(
+                        f"Credenciales incorrectas. Te quedan {5 - attempts} intentos antes del bloqueo."
+                    )
 
-    with tab_recover:
-        st.caption(
-            "Obligatorio: email y nombre de usuario deben coincidir con la misma cuenta registrada."
-        )
-        with st.form("auth_recover_form"):
-            recover_username = st.text_input("Nombre de usuario *", key="auth_recover_username")
-            email = st.text_input("Email vinculado a la cuenta *", key="auth_recover_email")
-            new_password = st.text_input("Nueva contrasena", type="password", key="auth_recover_password")
-            submit_recover = st.form_submit_button("Actualizar contrasena")
-        if submit_recover:
-            ok_email, msg_email = validate_email(email)
-            if not ok_email:
-                st.error(msg_email)
-                return
-            if len(recover_username.strip()) < 1:
-                st.error("Indica el nombre de usuario asociado a la cuenta.")
-                return
-            ok_password, password_errors = validate_password_owasp(new_password)
-            if not ok_password:
-                for msg in password_errors:
-                    st.error(msg)
-                return
-            ok_rec, rec_msg = recover_password_with_feedback(email, recover_username, new_password)
-            if ok_rec:
-                st.success("Contrasena actualizada. Ya puedes iniciar sesion.")
-            else:
-                st.error(rec_msg)
+        with tab_register:
+            with st.form("auth_register_form"):
+                new_username = st.text_input("Usuario", key="auth_register_username")
+                new_email = st.text_input("Email", key="auth_register_email")
+                new_password = st.text_input("Contrasena", type="password", key="auth_register_password")
+                submit_register = st.form_submit_button("Crear cuenta", use_container_width=True)
+            if submit_register:
+                if len(new_username.strip()) < 3:
+                    st.error("El usuario debe tener al menos 3 caracteres.")
+                    return
+                ok_email, msg_email = validate_email(new_email)
+                if not ok_email:
+                    st.error(msg_email)
+                    return
+                ok_password, password_errors = validate_password_owasp(new_password)
+                if not ok_password:
+                    for msg in password_errors:
+                        st.error(msg)
+                    return
+                ok_reg, reg_msg = create_user_with_feedback(new_username, new_email, new_password)
+                if ok_reg:
+                    st.success("Cuenta creada. Ya puedes iniciar sesion.")
+                else:
+                    st.error(reg_msg)
+
+        with tab_recover:
+            st.caption(
+                "Obligatorio: email y nombre de usuario deben coincidir con la misma cuenta registrada."
+            )
+            with st.form("auth_recover_form"):
+                recover_username = st.text_input("Nombre de usuario *", key="auth_recover_username")
+                email = st.text_input("Email vinculado a la cuenta *", key="auth_recover_email")
+                new_password = st.text_input("Nueva contrasena", type="password", key="auth_recover_password")
+                submit_recover = st.form_submit_button("Actualizar contrasena", use_container_width=True)
+            if submit_recover:
+                ok_email, msg_email = validate_email(email)
+                if not ok_email:
+                    st.error(msg_email)
+                    return
+                if len(recover_username.strip()) < 1:
+                    st.error("Indica el nombre de usuario asociado a la cuenta.")
+                    return
+                ok_password, password_errors = validate_password_owasp(new_password)
+                if not ok_password:
+                    for msg in password_errors:
+                        st.error(msg)
+                    return
+                ok_rec, rec_msg = recover_password_with_feedback(email, recover_username, new_password)
+                if ok_rec:
+                    st.success("Contrasena actualizada. Ya puedes iniciar sesion.")
+                else:
+                    st.error(rec_msg)
 
 
 def add_book_section(user_id: int) -> None:
@@ -383,6 +604,124 @@ def add_book_section(user_id: int) -> None:
             st.error(detail)
 
 
+def _render_status_management_panel(user_id: int, book: dict[str, Any]) -> None:
+    """Formulario de estado/fechas inline debajo de la tarjeta del libro."""
+    bid = book["book_id"]
+    cur = book["estado"]
+    total_pags = book.get("paginas")
+    tiene_paginas_totales = total_pags is not None and int(total_pags) > 0
+    idx = READING_STATES.index(cur) if cur in READING_STATES else 0
+
+    st.markdown(f"### Gestionar estado y fechas — **{book['title']}**")
+    with st.container(border=True):
+        save_clicked = False
+        cancel_clicked = False
+        with st.form(f"library_status_form_{bid}"):
+            col1, col2, col3 = st.columns([2, 1, 2])
+            with col1:
+                new_est = st.selectbox("Estado", READING_STATES, index=idx, key=f"library_estado_sel_{bid}")
+            fin_bloqueada = new_est == "Leyendo"
+            allow_abandon_pages = tiene_paginas_totales and (
+                new_est == "Abandonado" or cur == "Abandonado"
+            )
+            abandon_pages: Optional[int] = None
+            with col2:
+                if allow_abandon_pages:
+                    abandon_pages = st.number_input(
+                        "Paginas leidas",
+                        min_value=0,
+                        value=int(book["paginas_leidas_abandono"] or 0),
+                        step=1,
+                        key=f"library_abandon_pages_{bid}",
+                    )
+
+            d_ini = parse_iso_date(book["fecha_inicio"]) or date.today()
+            d_fin = parse_iso_date(book["fecha_fin"]) or date.today()
+            col_d1, col_d2, col_d3 = st.columns([2, 2, 1])
+            with col_d1:
+                has_ini = st.checkbox(
+                    "Registrar fecha inicio",
+                    value=bool(book["fecha_inicio"]),
+                    key=f"library_use_ini_{bid}",
+                )
+                edit_ini = st.date_input(
+                    "Fecha inicio",
+                    value=d_ini,
+                    key=f"library_date_ini_{bid}",
+                    disabled=not has_ini,
+                )
+            with col_d2:
+                has_fin = st.checkbox(
+                    "Registrar fecha fin",
+                    value=bool(book["fecha_fin"]) and not fin_bloqueada,
+                    key=f"library_use_fin_{bid}",
+                    disabled=fin_bloqueada,
+                )
+                edit_fin = st.date_input(
+                    "Fecha fin",
+                    value=d_fin,
+                    key=f"library_date_fin_{bid}",
+                    disabled=not has_fin or fin_bloqueada,
+                )
+
+            if (new_est == "Abandonado" or cur == "Abandonado") and not allow_abandon_pages:
+                st.info(
+                    "Para registrar paginas leidas en abandono, indica antes las paginas totales del libro "
+                    "en la ficha (Editar metadatos)."
+                )
+
+            _, btn_guardar, btn_cancelar = st.columns([2, 2, 1])
+            with btn_guardar:
+                save_clicked = st.form_submit_button("Guardar Cambios", use_container_width=True)
+            with btn_cancelar:
+                cancel_clicked = st.form_submit_button("Cancelar", use_container_width=True)
+
+        if cancel_clicked:
+            st.session_state.managing_status_book_id = None
+            st.rerun()
+
+        if save_clicked:
+            fi_w = edit_ini.isoformat() if has_ini else None
+            ff_w = edit_fin.isoformat() if has_fin and not fin_bloqueada else None
+            ap_val: Optional[int] = None
+            if allow_abandon_pages:
+                ap_val = int(abandon_pages or 0)
+
+            if new_est != cur:
+                delta = transition_updates(
+                    cur,
+                    new_est,
+                    book["fecha_inicio"],
+                    book["fecha_fin"],
+                    ap_val,
+                    fi_w,
+                    ff_w,
+                )
+                ok_save, err_save = update_library_row_safe(
+                    user_id,
+                    bid,
+                    delta["estado"],
+                    delta["fecha_inicio"],
+                    delta["fecha_fin"],
+                    delta["paginas_leidas_abandono"],
+                )
+            else:
+                pab: Optional[int]
+                if cur == "Abandonado" and tiene_paginas_totales:
+                    pab = ap_val
+                elif cur == "Abandonado":
+                    pab = None
+                else:
+                    pab = book["paginas_leidas_abandono"]
+                ok_save, err_save = update_library_row_safe(user_id, bid, cur, fi_w, ff_w, pab)
+
+            if ok_save:
+                st.session_state.managing_status_book_id = None
+                st.success("Cambios guardados correctamente.")
+                st.rerun()
+            st.error(err_save)
+
+
 def library_view(user_id: int) -> None:
     st.subheader("Mi biblioteca")
     books = get_user_library(user_id)
@@ -392,7 +731,6 @@ def library_view(user_id: int) -> None:
 
     view_mode = st.radio("Vista", ["Lista", "Galeria"], horizontal=True, key="library_view_mode")
     if view_mode != "Lista":
-        _inject_gallery_css()
         cols = st.columns(4)
         for i, book in enumerate(books):
             with cols[i % 4]:
@@ -403,51 +741,54 @@ def library_view(user_id: int) -> None:
                     )
                 else:
                     st.markdown(
-                        '<div class="gallery-tile" style="height:250px;display:flex;align-items:center;'
-                        'justify-content:center;border:1px dashed #888;border-radius:8px;">Sin portada</div>',
+                        '<div class="gallery-tile">'
+                        '<div class="gallery-placeholder">Sin portada</div>'
+                        f'<div class="gallery-book-title">{html.escape(book["title"])}</div>'
+                        '</div>',
                         unsafe_allow_html=True,
                     )
-                    st.markdown(f'<div class="gallery-book-title">{html.escape(book["title"])}</div>', unsafe_allow_html=True)
                 st.caption(f"{book['author']} · {book['estado']}")
         return
 
-    for book in books:
-        bid = book["book_id"]
-        total_pags = book.get("paginas")
-        tiene_paginas_totales = total_pags is not None and int(total_pags) > 0
+    for b in books:
+        bid = b["book_id"]
 
         with st.container(border=True):
-            render_book_list_row(book)
+            render_book_list_row(b)
             act1, act2 = st.columns(2)
             with act1:
                 if st.button("Editar metadatos", key=f"library_edit_open_{bid}"):
-                    st.session_state.library_editing_id = bid
-                    st.session_state.editing_book_id = None
+                    st.session_state.editing_book_id = bid
+                    st.session_state.managing_status_book_id = None
                     st.rerun()
             with act2:
                 if st.button("Gestionar estado y fechas", key=f"library_state_open_{bid}"):
-                    st.session_state.editing_book_id = bid
-                    st.session_state.library_editing_id = None
+                    st.session_state.managing_status_book_id = bid
+                    st.session_state.editing_book_id = None
                     st.rerun()
 
-            if st.session_state.library_editing_id == bid:
+        if st.session_state.editing_book_id == b["book_id"]:
+            with st.container(border=True):
                 idioma_idx = (
-                    LANGUAGE_OPTIONS.index(book["idioma"])
-                    if book["idioma"] in LANGUAGE_OPTIONS
+                    LANGUAGE_OPTIONS.index(b["idioma"])
+                    if b["idioma"] in LANGUAGE_OPTIONS
                     else 0
                 )
+                st.markdown("**Editar metadatos**")
+                save_meta = False
+                cancel_meta = False
                 with st.form(f"library_edit_meta_form_{bid}"):
                     st.caption("Los cambios actualizan la ficha del libro en el catalogo comun.")
-                    etitle = st.text_input("Titulo", value=book["title"], key=f"library_edit_title_{bid}")
-                    eauthor = st.text_input("Autor", value=book["author"], key=f"library_edit_author_{bid}")
-                    egenre = st.text_input("Genero", value=book["genre"] or "", key=f"library_edit_genre_{bid}")
+                    etitle = st.text_input("Titulo", value=b["title"], key=f"library_edit_title_{bid}")
+                    eauthor = st.text_input("Autor", value=b["author"], key=f"library_edit_author_{bid}")
+                    egenre = st.text_input("Genero", value=b["genre"] or "", key=f"library_edit_genre_{bid}")
                     eidioma = st.selectbox(
                         "Idioma",
                         LANGUAGE_OPTIONS,
                         index=idioma_idx,
                         key=f"library_edit_idioma_{bid}",
                     )
-                    ep_def = int(book["paginas"]) if book["paginas"] is not None else 0
+                    ep_def = int(b["paginas"]) if b["paginas"] is not None else 0
                     epag = st.number_input(
                         "Paginas totales (0 = sin registrar)",
                         min_value=0,
@@ -460,13 +801,17 @@ def library_view(user_id: int) -> None:
                         type=["jpg", "jpeg", "png"],
                         key=f"library_edit_cover_{bid}",
                     )
-                    save_meta = st.form_submit_button("Guardar ficha")
-                if st.button("Cancelar", key=f"library_edit_cancel_{bid}"):
-                    st.session_state.library_editing_id = None
+                    _, btn_guardar, btn_cancelar = st.columns([2, 2, 1])
+                    with btn_guardar:
+                        save_meta = st.form_submit_button("Guardar ficha", use_container_width=True)
+                    with btn_cancelar:
+                        cancel_meta = st.form_submit_button("Cancelar", use_container_width=True)
+                if cancel_meta:
+                    st.session_state.editing_book_id = None
                     st.rerun()
                 if save_meta:
                     pag_val = int(epag) if epag > 0 else None
-                    ref = book.get("isbn_13") or book.get("isbn_10") or str(bid)
+                    ref = b.get("isbn_13") or b.get("isbn_10") or str(bid)
                     cover_path_new, cover_err = save_cover_file(ref, ecover)
                     if cover_err:
                         st.error(cover_err)
@@ -484,115 +829,14 @@ def library_view(user_id: int) -> None:
                             upd_cover,
                         )
                         if ok_m:
-                            st.session_state.library_editing_id = None
+                            st.session_state.editing_book_id = None
                             st.success("Ficha actualizada.")
                             st.rerun()
                         else:
                             st.error(err_m)
 
-            with st.expander(
-                "Gestionar estado y fechas",
-                expanded=st.session_state.editing_book_id == bid,
-            ):
-                cur = book["estado"]
-                idx = READING_STATES.index(cur) if cur in READING_STATES else 0
-                new_est = st.selectbox("Estado", READING_STATES, index=idx, key=f"library_estado_sel_{bid}")
-
-                fin_bloqueada = new_est == "Leyendo"
-                has_ini = st.checkbox(
-                    "Registrar fecha de inicio",
-                    value=bool(book["fecha_inicio"]),
-                    key=f"library_use_ini_{bid}",
-                )
-                d_ini = parse_iso_date(book["fecha_inicio"]) or date.today()
-                edit_ini = st.date_input(
-                    "Fecha inicio",
-                    value=d_ini,
-                    key=f"library_date_ini_{bid}",
-                    disabled=not has_ini,
-                )
-                has_fin = st.checkbox(
-                    "Registrar fecha de fin",
-                    value=bool(book["fecha_fin"]) and not fin_bloqueada,
-                    key=f"library_use_fin_{bid}",
-                    disabled=fin_bloqueada,
-                )
-                d_fin = parse_iso_date(book["fecha_fin"]) or date.today()
-                edit_fin = st.date_input(
-                    "Fecha fin",
-                    value=d_fin,
-                    key=f"library_date_fin_{bid}",
-                    disabled=not has_fin or fin_bloqueada,
-                )
-
-                abandon_pages: Optional[int] = None
-                allow_abandon_pages = tiene_paginas_totales and (
-                    new_est == "Abandonado" or cur == "Abandonado"
-                )
-                if allow_abandon_pages:
-                    abandon_pages = st.number_input(
-                        "Paginas leidas (abandono)",
-                        min_value=0,
-                        value=int(book["paginas_leidas_abandono"] or 0),
-                        step=1,
-                        key=f"library_abandon_pages_{bid}",
-                    )
-                elif new_est == "Abandonado" or cur == "Abandonado":
-                    st.info(
-                        "Para registrar paginas leidas en abandono, indica antes las paginas totales del libro "
-                        "en la ficha (Editar metadatos)."
-                    )
-
-                btn_save, btn_cancel = st.columns(2)
-                with btn_save:
-                    save_lib = st.button("Guardar cambios", key=f"library_save_{bid}")
-                with btn_cancel:
-                    if st.button("Cancelar", key=f"library_state_cancel_{bid}"):
-                        st.session_state.editing_book_id = None
-                        st.rerun()
-
-                if save_lib:
-                    fi_w = edit_ini.isoformat() if has_ini else None
-                    ff_w = edit_fin.isoformat() if has_fin and not fin_bloqueada else None
-                    ap_val: Optional[int] = None
-                    if allow_abandon_pages:
-                        ap_val = int(abandon_pages or 0)
-
-                    if new_est != cur:
-                        delta = transition_updates(
-                            cur,
-                            new_est,
-                            book["fecha_inicio"],
-                            book["fecha_fin"],
-                            ap_val,
-                            fi_w,
-                            ff_w,
-                        )
-                        ok_save, err_save = update_library_row_safe(
-                            user_id,
-                            bid,
-                            delta["estado"],
-                            delta["fecha_inicio"],
-                            delta["fecha_fin"],
-                            delta["paginas_leidas_abandono"],
-                        )
-                    else:
-                        pab: Optional[int]
-                        if cur == "Abandonado" and tiene_paginas_totales:
-                            pab = ap_val
-                        elif cur == "Abandonado":
-                            pab = None
-                        else:
-                            pab = book["paginas_leidas_abandono"]
-                        ok_save, err_save = update_library_row_safe(
-                            user_id, bid, cur, fi_w, ff_w, pab
-                        )
-                    if ok_save:
-                        st.session_state.editing_book_id = None
-                        st.success("Cambios guardados correctamente.")
-                        st.rerun()
-                    else:
-                        st.error(err_save)
+        if st.session_state.managing_status_book_id == b["book_id"]:
+            _render_status_management_panel(user_id, b)
 
 
 def statistics_section(user_id: int) -> None:
@@ -636,7 +880,13 @@ def statistics_section(user_id: int) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Mi Estanteria Digital", page_icon="📚", layout="wide")
+    st.set_page_config(
+        page_title="Mi Estanteria Digital",
+        page_icon="📚",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
+    inject_app_theme()
     init_db()
     init_session_state()
     if st.session_state.user_id is None:
@@ -647,8 +897,8 @@ def main() -> None:
     if st.button("Cerrar sesion", key="layout_logout_button"):
         st.session_state.user_id = None
         st.session_state.username = None
-        st.session_state.library_editing_id = None
         st.session_state.editing_book_id = None
+        st.session_state.managing_status_book_id = None
         st.rerun()
 
     add_book_section(st.session_state.user_id)
