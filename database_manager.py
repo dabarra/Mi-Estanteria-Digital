@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from utils import COVERS_DIR, normalize_isbn
@@ -158,7 +158,7 @@ def create_user_record(username: str, email: str, password_hash: str) -> None:
             INSERT INTO usuarios (username, email, password, created_at)
             VALUES (?, ?, ?, ?)
             """,
-            (username.strip(), email.strip().lower(), password_hash, datetime.utcnow().isoformat()),
+            (username.strip(), email.strip().lower(), password_hash, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
 
@@ -265,7 +265,7 @@ def insert_libro_comun(
                 idioma,
                 paginas,
                 cover_path,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
             ),
         )
         conn.commit()
@@ -297,7 +297,7 @@ def add_book_to_user_library(
                     fecha_inicio,
                     fecha_fin,
                     paginas_abandono if estado == "Abandonado" else None,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 ),
             )
             conn.commit()

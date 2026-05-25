@@ -1,7 +1,7 @@
 import os
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from io import BytesIO
 from typing import Any, Optional
 
@@ -164,7 +164,7 @@ def save_cover_file(reference_isbn: str, uploaded_file) -> tuple[Optional[str], 
 
             safe_ref = re.sub(r"[^A-Z0-9]", "", normalize_isbn(reference_isbn)) or "ISBN"
             ext = ".jpg" if internal_format == "JPEG" else ".png"
-            filename = f"{safe_ref}_{int(datetime.utcnow().timestamp())}_{uuid.uuid4().hex[:8]}{ext}"
+            filename = f"{safe_ref}_{int(datetime.now(timezone.utc).timestamp())}_{uuid.uuid4().hex[:8]}{ext}"
             filename = os.path.basename(filename)
             target_path = os.path.join(COVERS_DIR, filename)
 
