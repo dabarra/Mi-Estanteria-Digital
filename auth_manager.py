@@ -2,7 +2,7 @@ import re
 import sqlite3
 from typing import Any, Optional
 
-from passlib.context import CryptContext
+import bcrypt
 
 from database_manager import (
     create_user_record,
@@ -14,7 +14,6 @@ from database_manager import (
 
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 PASSWORD_SPECIAL_PATTERN = re.compile(r"""[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]""")
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def validate_email(email: str) -> tuple[bool, str]:
@@ -42,7 +41,9 @@ def validate_password_owasp(password: str) -> tuple[bool, list[str]]:
 
 
 def create_user(username: str, email: str, password: str) -> None:
-    password_hash = pwd_context.hash(password)
+    password_bytes = password.encode("utf-8")
+    salt = bcrypt.gensalt()
+    password_hash = bcrypt.hashpw(password_bytes, salt).decode("utf-8")
     create_user_record(username, email, password_hash)
 
 
@@ -51,8 +52,11 @@ def authenticate_user(login_mode: str, identifier: str, password: str) -> Option
         row = get_user_by_email(identifier)
     else:
         row = get_user_by_username(identifier)
-    if row and pwd_context.verify(password, row["password"]):
-        return row
+    if row:
+        password_bytes = password.encode("utf-8")
+        hash_bytes = row["password"].encode("utf-8")
+        if bcrypt.checkpw(password_bytes, hash_bytes):
+            return row
     return None
 
 
@@ -84,7 +88,8 @@ def recover_password_with_feedback(email: str, username: str, new_password: str)
         row = get_user_by_email_and_username(clean_email, clean_user)
         if row is None:
             return False, "El email y el nombre de usuario no coinciden con ninguna cuenta registrada."
-        new_hash = pwd_context.hash(new_password)
+        new_bytes = new_password.encode("utf-8")
+        new_hash = bcrypt.hashpw(new_bytes, bcrypt.gensalt()).decode("utf-8")
         if update_user_password_by_email(clean_email, new_hash):
             return True, ""
         return False, "No se pudo actualizar la contraseña. Vuelve a intentarlo."

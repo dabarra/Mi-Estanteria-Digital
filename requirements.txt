@@ -1,5 +1,4 @@
 streamlit
 pandas
-passlib
 Pillow
 bcrypt
