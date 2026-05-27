@@ -3,6 +3,8 @@ import sqlite3
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
+import bcrypt
+
 from utils import COVERS_DIR, normalize_isbn
 
 DB_PATH = "biblioteca.db"
@@ -97,6 +99,291 @@ def _migrate_legacy_library(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE biblioteca_usuario ADD COLUMN paginas_leidas_abandono INTEGER")
 
 
+_SEED_FINISHED_DATE = "2026-02-15"
+_SEED_STARTED_DATE = "2025-11-01"
+
+_SEED_CATALOG: list[dict[str, Any]] = [
+    {
+        "title": "O último barco",
+        "author": "Domingo Villar",
+        "isbn_13": "9788417624279",
+        "isbn_10": "8417624276",
+        "paginas": 712,
+        "genre": "Novela negra",
+        "idioma": "Gallego",
+        "cover_path": "portadas/o_ultimo_barco.jpg",
+        "estado": "Leyendo",
+        "fecha_inicio": None,
+        "fecha_fin": None,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "Os dous de sempre",
+        "author": "Castelao",
+        "isbn_13": "9788498658125",
+        "isbn_10": "8498658126",
+        "paginas": 252,
+        "genre": "Narrativa",
+        "idioma": "Gallego",
+        "cover_path": "portadas/os_dous_de_sempre.jpg",
+        "estado": "Leyendo",
+        "fecha_inicio": None,
+        "fecha_fin": None,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "Si el mar no regresa",
+        "author": "Sara Búho",
+        "isbn_13": "9791387761639",
+        "isbn_10": None,
+        "paginas": 224,
+        "genre": "Poesia",
+        "idioma": "Espanol",
+        "cover_path": "portadas/si_el_mar_no_regresa.jpg",
+        "estado": "Terminado",
+        "fecha_inicio": _SEED_STARTED_DATE,
+        "fecha_fin": _SEED_FINISHED_DATE,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "La península de las casas vacías",
+        "author": "David Uclés",
+        "isbn_13": "9788419942319",
+        "isbn_10": "8419942313",
+        "paginas": 700,
+        "genre": "Narrativa histórica",
+        "idioma": "Espanol",
+        "cover_path": "portadas/la_peninsula_de_las_casas_vacias.jpg",
+        "estado": "Terminado",
+        "fecha_inicio": _SEED_STARTED_DATE,
+        "fecha_fin": _SEED_FINISHED_DATE,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "Lo inesperado",
+        "author": "Pedro Simón",
+        "isbn_13": "9788467082159",
+        "isbn_10": "8467082159",
+        "paginas": 360,
+        "genre": "Novela contemporánea",
+        "idioma": "Espanol",
+        "cover_path": "portadas/lo_inesperado.jpg",
+        "estado": "Terminado",
+        "fecha_inicio": _SEED_STARTED_DATE,
+        "fecha_fin": _SEED_FINISHED_DATE,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "Me crie como un fascista",
+        "author": "Antonio Maestre",
+        "isbn_13": "9788432249662",
+        "isbn_10": "843224966X",
+        "paginas": 240,
+        "genre": "Ensayo",
+        "idioma": "Espanol",
+        "cover_path": "portadas/me_crie_como_un_fascista.jpg",
+        "estado": "Terminado",
+        "fecha_inicio": _SEED_STARTED_DATE,
+        "fecha_fin": _SEED_FINISHED_DATE,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "La amiga estupenda",
+        "author": "Elena Ferrante",
+        "isbn_13": "9788426420787",
+        "isbn_10": "8426420788",
+        "paginas": 392,
+        "genre": "Novela literaria",
+        "idioma": "Espanol",
+        "cover_path": "portadas/la_amiga_estupenda.jpg",
+        "estado": "Terminado",
+        "fecha_inicio": _SEED_STARTED_DATE,
+        "fecha_fin": _SEED_FINISHED_DATE,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "Lluvia fina",
+        "author": "Luis Landero",
+        "isbn_13": "9788490666562",
+        "isbn_10": "8490666562",
+        "paginas": 272,
+        "genre": "Narrativa",
+        "idioma": "Espanol",
+        "cover_path": "portadas/lluvia_fina.jpg",
+        "estado": "Pendiente",
+        "fecha_inicio": None,
+        "fecha_fin": None,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "Más allá del mapa",
+        "author": "Amarna Miller",
+        "isbn_13": "9788402424563",
+        "isbn_10": "8402424562",
+        "paginas": 288,
+        "genre": "Viajes y Crónica",
+        "idioma": "Espanol",
+        "cover_path": "portadas/mas_alla_del_mapa.jpg",
+        "estado": "Pendiente",
+        "fecha_inicio": None,
+        "fecha_fin": None,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "Rayuela",
+        "author": "Julio Cortázar",
+        "isbn_13": "9788437624747",
+        "isbn_10": "843762474X",
+        "paginas": 756,
+        "genre": "Clásico contemporáneo",
+        "idioma": "Espanol",
+        "cover_path": "portadas/rayuela.jpg",
+        "estado": "Pendiente",
+        "fecha_inicio": None,
+        "fecha_fin": None,
+        "paginas_leidas_abandono": None,
+    },
+    {
+        "title": "La diva",
+        "author": "Reyes Monforte",
+        "isbn_13": "9788401035784",
+        "isbn_10": "8401035787",
+        "paginas": 568,
+        "genre": "Novela histórica",
+        "idioma": "Espanol",
+        "cover_path": "portadas/la_diva.jpg",
+        "estado": "Abandonado",
+        "fecha_inicio": _SEED_STARTED_DATE,
+        "fecha_fin": "2026-01-20",
+        "paginas_leidas_abandono": 120,
+    },
+    {
+        "title": "En defense de la memoria",
+        "author": "Elvira Sastre",
+        "isbn_13": "9788410190849",
+        "isbn_10": "841019084X",
+        "paginas": 184,
+        "genre": "Poesía",
+        "idioma": "Espanol",
+        "cover_path": "portadas/en_defensa_de_la_memoria.jpg",
+        "estado": "Abandonado",
+        "fecha_inicio": _SEED_STARTED_DATE,
+        "fecha_fin": "2026-03-10",
+        "paginas_leidas_abandono": 50,
+    },
+]
+
+
+def _seed_evaluator_data(conn: sqlite3.Connection) -> None:
+    """Carga usuario de prueba, catálogo y biblioteca si la BD está vacía o sin vincular."""
+    now = datetime.now(timezone.utc).isoformat()
+    today = date.today().isoformat()
+
+    profesor = conn.execute(
+        "SELECT id FROM usuarios WHERE username = ?",
+        ("profesor",),
+    ).fetchone()
+    if profesor is None:
+        password_hash = bcrypt.hashpw(
+            "Profesor2026*".encode("utf-8"), bcrypt.gensalt()
+        ).decode("utf-8")
+        conn.execute(
+            """
+            INSERT INTO usuarios (username, email, password, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("profesor", "profesor@tfm.com", password_hash, now),
+        )
+
+    catalog_count = conn.execute("SELECT COUNT(*) AS c FROM libros_comunes").fetchone()["c"]
+    if catalog_count == 0:
+        for book in _SEED_CATALOG:
+            conn.execute(
+                """
+                INSERT INTO libros_comunes (
+                    isbn_10, isbn_13, title, author, genre, idioma, paginas, cover_path, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    book["isbn_10"],
+                    book["isbn_13"],
+                    book["title"],
+                    book["author"],
+                    book["genre"],
+                    book["idioma"],
+                    book["paginas"],
+                    book["cover_path"],
+                    now,
+                ),
+            )
+
+    profesor_row = conn.execute(
+        "SELECT id FROM usuarios WHERE username = ?",
+        ("profesor",),
+    ).fetchone()
+    if profesor_row is None:
+        return
+    user_id = int(profesor_row["id"])
+
+    library_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM biblioteca_usuario WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()["c"]
+    if library_count > 0:
+        return
+
+    for book in _SEED_CATALOG:
+        isbn13 = book["isbn_13"]
+        isbn10 = book["isbn_10"]
+        if isbn13 and isbn10:
+            row = conn.execute(
+                "SELECT id FROM libros_comunes WHERE isbn_13 = ? OR isbn_10 = ? LIMIT 1",
+                (isbn13, isbn10),
+            ).fetchone()
+        elif isbn13:
+            row = conn.execute(
+                "SELECT id FROM libros_comunes WHERE isbn_13 = ? LIMIT 1",
+                (isbn13,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id FROM libros_comunes WHERE isbn_10 = ? LIMIT 1",
+                (isbn10,),
+            ).fetchone()
+        if row is None:
+            continue
+
+        estado = book["estado"]
+        fecha_inicio = book["fecha_inicio"]
+        fecha_fin = book["fecha_fin"]
+        if estado == "Leyendo":
+            fecha_inicio = today
+            fecha_fin = None
+        paginas_abandono = book["paginas_leidas_abandono"]
+        if estado != "Abandonado":
+            paginas_abandono = None
+
+        conn.execute(
+            """
+            INSERT INTO biblioteca_usuario (
+                user_id, book_id, estado, fecha_inicio, fecha_fin,
+                paginas_leidas_abandono, added_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                int(row["id"]),
+                estado,
+                fecha_inicio,
+                fecha_fin,
+                paginas_abandono,
+                now,
+            ),
+        )
+
+
 def init_db() -> None:
     os.makedirs(COVERS_DIR, exist_ok=True)
     with get_connection() as conn:
@@ -148,6 +435,7 @@ def init_db() -> None:
         _migrate_legacy_users(conn)
         _migrate_legacy_books(conn)
         _migrate_legacy_library(conn)
+        _seed_evaluator_data(conn)
         conn.commit()
 
 
