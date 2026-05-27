@@ -21,6 +21,16 @@ def parse_iso_date(s: Optional[str]) -> Optional[date]:
         return None
 
 
+def format_iso_date_display(s: Optional[str]) -> str:
+    """Convierte ISO (AAAA-MM-DD) a DD/MM/AAAA para mostrar en la UI."""
+    if not s or not str(s).strip():
+        return "—"
+    d = parse_iso_date(str(s))
+    if d is None:
+        return str(s)[:10]
+    return d.strftime("%d/%m/%Y")
+
+
 def initial_dates_for_estado(estado: str) -> tuple[Optional[str], Optional[str]]:
     """Fechas sugeridas al dar de alta un libro; solo Terminado fija inicio y fin por defecto."""
     t = today_iso()
@@ -53,13 +63,16 @@ def transition_updates(
         out["paginas_leidas_abandono"] = None
         return out
     if new == "Leyendo":
-        out["fecha_inicio"] = fi_input if fi_input is not None else (fi if old == "Leyendo" else None)
+        if old == "Pendiente":
+            out["fecha_inicio"] = fi_input if fi_input is not None else today_iso()
+        else:
+            out["fecha_inicio"] = fi_input if fi_input is not None else (fi if old == "Leyendo" else None)
         out["fecha_fin"] = None
         out["paginas_leidas_abandono"] = None
         return out
     if new == "Terminado":
         out["fecha_inicio"] = fi_input if fi_input is not None else fi
-        out["fecha_fin"] = ff_input if ff_input is not None else ff
+        out["fecha_fin"] = ff_input if ff_input is not None else (ff or today_iso())
         out["paginas_leidas_abandono"] = None
         return out
     if new == "Abandonado":

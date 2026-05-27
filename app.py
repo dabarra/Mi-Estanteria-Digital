@@ -27,9 +27,11 @@ from database_manager import (
     update_library_row_safe,
 )
 from utils import (
+    format_iso_date_display,
     initial_dates_for_estado,
     parse_iso_date,
     save_cover_file,
+    today_iso,
     transition_updates,
     validate_isbn10,
     validate_isbn13,
@@ -465,10 +467,12 @@ def render_book_list_row(book: dict[str, Any]) -> None:
         else:
             st.markdown(_list_cover_placeholder_html(), unsafe_allow_html=True)
     with col_info:
-        st.markdown(
-            f"**{book['title']}**  \n"
-            f"{book['author']} · {idioma} · {ptxt} · *{estado}*"
-        )
+        meta = f"{book['author']} · {idioma} · {ptxt} · *{estado}*"
+        if book.get("fecha_inicio"):
+            meta += f" · Inicio: {format_iso_date_display(book['fecha_inicio'])}"
+        if book.get("fecha_fin"):
+            meta += f" · Fin: {format_iso_date_display(book['fecha_fin'])}"
+        st.markdown(f"**{book['title']}**  \n{meta}")
 
 
 def init_session_state() -> None:
@@ -717,121 +721,154 @@ def add_book_section(user_id: int) -> None:
 
 
 def _render_status_management_panel(user_id: int, book: dict[str, Any]) -> None:
-    """Formulario de estado/fechas inline debajo de la tarjeta del libro."""
+    """Panel reactivo de estado/fechas inline debajo de la tarjeta del libro."""
     bid = book["book_id"]
     cur = book["estado"]
     total_pags = book.get("paginas")
     tiene_paginas_totales = total_pags is not None and int(total_pags) > 0
     idx = READING_STATES.index(cur) if cur in READING_STATES else 0
 
+    est_key = f"library_estado_sel_{bid}"
+    prev_key = f"library_status_prev_est_{bid}"
+    ini_chk_key = f"library_use_ini_{bid}"
+    fin_chk_key = f"library_use_fin_{bid}"
+    ini_date_key = f"library_date_ini_{bid}"
+    fin_date_key = f"library_date_fin_{bid}"
+
+    prev_est = st.session_state.get(prev_key, cur)
+
     st.markdown(f"### Gestionar estado y fechas — **{book['title']}**")
     with st.container(border=True):
-        save_clicked = False
-        cancel_clicked = False
-        with st.form(f"library_status_form_{bid}"):
-            col1, col2, col3 = st.columns([2, 1, 2])
-            with col1:
-                new_est = st.selectbox("Estado", READING_STATES, index=idx, key=f"library_estado_sel_{bid}")
-            fin_bloqueada = new_est == "Leyendo"
-            allow_abandon_pages = tiene_paginas_totales and (
-                new_est == "Abandonado" or cur == "Abandonado"
-            )
-            abandon_pages: Optional[int] = None
-            with col2:
-                if allow_abandon_pages:
-                    abandon_pages = st.number_input(
-                        "Paginas leidas",
-                        min_value=0,
-                        value=int(book["paginas_leidas_abandono"] or 0),
-                        step=1,
-                        key=f"library_abandon_pages_{bid}",
-                    )
-
-            d_ini = parse_iso_date(book["fecha_inicio"]) or date.today()
-            d_fin = parse_iso_date(book["fecha_fin"]) or date.today()
-            col_d1, col_d2, col_d3 = st.columns([2, 2, 1])
-            with col_d1:
-                has_ini = st.checkbox(
-                    "Registrar fecha inicio",
-                    value=bool(book["fecha_inicio"]),
-                    key=f"library_use_ini_{bid}",
-                )
-                edit_ini = st.date_input(
-                    "Fecha inicio",
-                    value=d_ini,
-                    key=f"library_date_ini_{bid}",
-                    disabled=not has_ini,
-                )
-            with col_d2:
-                has_fin = st.checkbox(
-                    "Registrar fecha fin",
-                    value=bool(book["fecha_fin"]) and not fin_bloqueada,
-                    key=f"library_use_fin_{bid}",
-                    disabled=fin_bloqueada,
-                )
-                edit_fin = st.date_input(
-                    "Fecha fin",
-                    value=d_fin,
-                    key=f"library_date_fin_{bid}",
-                    disabled=not has_fin or fin_bloqueada,
-                )
-
-            if (new_est == "Abandonado" or cur == "Abandonado") and not allow_abandon_pages:
-                st.info(
-                    "Para registrar paginas leidas en abandono, indica antes las paginas totales del libro "
-                    "en la ficha (Editar metadatos)."
-                )
-
-            _, btn_guardar, btn_cancelar = st.columns([2, 2, 1])
-            with btn_guardar:
-                save_clicked = st.form_submit_button("Guardar Cambios", use_container_width=True)
-            with btn_cancelar:
-                cancel_clicked = st.form_submit_button("Cancelar", use_container_width=True)
-
-        if cancel_clicked:
-            st.session_state.managing_status_book_id = None
-            st.rerun()
-
-        if save_clicked:
-            fi_w = edit_ini.isoformat() if has_ini else None
-            ff_w = edit_fin.isoformat() if has_fin and not fin_bloqueada else None
-            ap_val: Optional[int] = None
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col1:
+            new_est = st.selectbox("Estado", READING_STATES, index=idx, key=est_key)
+        fin_bloqueada = new_est == "Leyendo"
+        allow_abandon_pages = tiene_paginas_totales and (
+            new_est == "Abandonado" or cur == "Abandonado"
+        )
+        abandon_pages: Optional[int] = None
+        with col2:
             if allow_abandon_pages:
-                ap_val = int(abandon_pages or 0)
+                abandon_pages = st.number_input(
+                    "Paginas leidas",
+                    min_value=0,
+                    value=int(book["paginas_leidas_abandono"] or 0),
+                    step=1,
+                    key=f"library_abandon_pages_{bid}",
+                )
 
-            if new_est != cur:
-                delta = transition_updates(
-                    cur,
-                    new_est,
-                    book["fecha_inicio"],
-                    book["fecha_fin"],
-                    ap_val,
-                    fi_w,
-                    ff_w,
-                )
-                ok_save, err_save = update_library_row_safe(
-                    user_id,
-                    bid,
-                    delta["estado"],
-                    delta["fecha_inicio"],
-                    delta["fecha_fin"],
-                    delta["paginas_leidas_abandono"],
-                )
+        if new_est == "Leyendo" and prev_est == "Pendiente":
+            st.session_state[ini_chk_key] = True
+            st.session_state[ini_date_key] = date.today()
+        if new_est == "Terminado" and prev_est != "Terminado":
+            st.session_state[fin_chk_key] = True
+            st.session_state[fin_date_key] = date.today()
+        if fin_bloqueada:
+            st.session_state[fin_chk_key] = False
+
+        if ini_chk_key not in st.session_state:
+            st.session_state[ini_chk_key] = bool(book["fecha_inicio"])
+        if fin_chk_key not in st.session_state:
+            st.session_state[fin_chk_key] = bool(book["fecha_fin"]) and not fin_bloqueada
+        if ini_date_key not in st.session_state:
+            st.session_state[ini_date_key] = parse_iso_date(book["fecha_inicio"]) or date.today()
+        if fin_date_key not in st.session_state:
+            st.session_state[fin_date_key] = parse_iso_date(book["fecha_fin"]) or date.today()
+
+        col_d1, col_d2, col_d3 = st.columns([2, 2, 1])
+        with col_d1:
+            has_ini = st.checkbox("Registrar fecha inicio", key=ini_chk_key)
+            edit_ini = st.date_input(
+                "Fecha inicio",
+                key=ini_date_key,
+                format="DD/MM/YYYY",
+                disabled=not has_ini,
+            )
+        with col_d2:
+            has_fin = st.checkbox(
+                "Registrar fecha fin",
+                key=fin_chk_key,
+                disabled=fin_bloqueada,
+            )
+            edit_fin = st.date_input(
+                "Fecha fin",
+                key=fin_date_key,
+                format="DD/MM/YYYY",
+                disabled=not has_fin or fin_bloqueada,
+            )
+
+        if (new_est == "Abandonado" or cur == "Abandonado") and not allow_abandon_pages:
+            st.info(
+                "Para registrar paginas leidas en abandono, indica antes las paginas totales del libro "
+                "en la ficha (Editar metadatos)."
+            )
+
+        _, btn_guardar, btn_cancelar = st.columns([2, 2, 1])
+        with btn_guardar:
+            save_clicked = st.button("Guardar Cambios", key=f"library_status_save_{bid}", use_container_width=True)
+        with btn_cancelar:
+            cancel_clicked = st.button("Cancelar", key=f"library_status_cancel_{bid}", use_container_width=True)
+
+        st.session_state[prev_key] = new_est
+
+    if cancel_clicked:
+        for k in (prev_key, ini_chk_key, fin_chk_key, ini_date_key, fin_date_key):
+            st.session_state.pop(k, None)
+        st.session_state.managing_status_book_id = None
+        st.rerun()
+
+    if save_clicked:
+        has_ini = st.session_state.get(ini_chk_key, False)
+        has_fin = st.session_state.get(fin_chk_key, False)
+        edit_ini = st.session_state.get(ini_date_key, date.today())
+        edit_fin = st.session_state.get(fin_date_key, date.today())
+
+        fi_w = edit_ini.isoformat() if has_ini else None
+        if new_est == "Terminado":
+            has_fin = True
+            ff_w = edit_fin.isoformat() if isinstance(edit_fin, date) else today_iso()
+        else:
+            ff_w = edit_fin.isoformat() if has_fin and not fin_bloqueada else None
+
+        ap_val: Optional[int] = None
+        if allow_abandon_pages:
+            ap_val = int(abandon_pages or 0)
+
+        if new_est != cur:
+            delta = transition_updates(
+                cur,
+                new_est,
+                book["fecha_inicio"],
+                book["fecha_fin"],
+                ap_val,
+                fi_w,
+                ff_w,
+            )
+            ok_save, err_save = update_library_row_safe(
+                user_id,
+                bid,
+                delta["estado"],
+                delta["fecha_inicio"],
+                delta["fecha_fin"],
+                delta["paginas_leidas_abandono"],
+            )
+        else:
+            pab: Optional[int]
+            if cur == "Abandonado" and tiene_paginas_totales:
+                pab = ap_val
+            elif cur == "Abandonado":
+                pab = None
             else:
-                pab: Optional[int]
-                if cur == "Abandonado" and tiene_paginas_totales:
-                    pab = ap_val
-                elif cur == "Abandonado":
-                    pab = None
-                else:
-                    pab = book["paginas_leidas_abandono"]
-                ok_save, err_save = update_library_row_safe(user_id, bid, cur, fi_w, ff_w, pab)
+                pab = book["paginas_leidas_abandono"]
+            ok_save, err_save = update_library_row_safe(user_id, bid, cur, fi_w, ff_w, pab)
 
-            if ok_save:
-                st.session_state.managing_status_book_id = None
-                st.success("Cambios guardados correctamente.")
-                st.rerun()
-            st.error(err_save)
+        if ok_save:
+            for k in (prev_key, ini_chk_key, fin_chk_key, ini_date_key, fin_date_key):
+                st.session_state.pop(k, None)
+            st.session_state.managing_status_book_id = None
+            st.success("Cambios guardados correctamente.")
+            st.rerun()
+        st.error(err_save)
 
 
 def library_view(user_id: int) -> None:
@@ -862,9 +899,8 @@ def library_view(user_id: int) -> None:
                 st.caption(f"{book['author']} · {book['estado']}")
         return
 
-    for b in books:
+    def _render_list_book_card(b: dict[str, Any]) -> None:
         bid = b["book_id"]
-
         with st.container(border=True):
             render_book_list_row(b)
             act1, act2 = st.columns(2)
@@ -877,6 +913,14 @@ def library_view(user_id: int) -> None:
                 if st.button("Gestionar estado y fechas", key=f"library_state_open_{bid}"):
                     st.session_state.managing_status_book_id = bid
                     st.session_state.editing_book_id = None
+                    st.session_state[f"library_status_prev_est_{bid}"] = b["estado"]
+                    for _k in (
+                        f"library_use_ini_{bid}",
+                        f"library_use_fin_{bid}",
+                        f"library_date_ini_{bid}",
+                        f"library_date_fin_{bid}",
+                    ):
+                        st.session_state.pop(_k, None)
                     st.rerun()
 
         if st.session_state.editing_book_id == b["book_id"]:
@@ -949,6 +993,14 @@ def library_view(user_id: int) -> None:
 
         if st.session_state.managing_status_book_id == b["book_id"]:
             _render_status_management_panel(user_id, b)
+
+    for estado in READING_STATES:
+        group = [b for b in books if (b.get("estado") or "Pendiente") == estado]
+        if not group:
+            continue
+        st.markdown(f"### {estado}")
+        for b in group:
+            _render_list_book_card(b)
 
 
 def statistics_section(user_id: int) -> None:

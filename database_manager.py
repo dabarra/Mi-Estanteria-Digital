@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from utils import COVERS_DIR, normalize_isbn
@@ -446,6 +446,8 @@ def update_library_row_safe(
     fecha_fin: Optional[str],
     paginas_abandono: Optional[int],
 ) -> tuple[bool, str]:
+    if estado == "Terminado" and (not fecha_fin or not str(fecha_fin).strip()):
+        fecha_fin = date.today().isoformat()
     try:
         update_biblioteca_row(
             user_id, book_id, estado, fecha_inicio, fecha_fin, paginas_abandono
