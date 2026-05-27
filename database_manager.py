@@ -279,21 +279,25 @@ def _seed_evaluator_data(conn: sqlite3.Connection) -> None:
     now = datetime.now(timezone.utc).isoformat()
     today = date.today().isoformat()
 
-    profesor = conn.execute(
-        "SELECT id FROM usuarios WHERE username = ?",
+    conn.execute(
+        """
+        DELETE FROM biblioteca_usuario
+        WHERE user_id IN (SELECT id FROM usuarios WHERE username = ?)
+        """,
         ("profesor",),
-    ).fetchone()
-    if profesor is None:
-        password_hash = bcrypt.hashpw(
-            "Profesor2026*".encode("utf-8"), bcrypt.gensalt()
-        ).decode("utf-8")
-        conn.execute(
-            """
-            INSERT INTO usuarios (username, email, password, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            ("profesor", "profesor@tfm.com", password_hash, now),
-        )
+    )
+    conn.execute("DELETE FROM usuarios WHERE username = ?", ("profesor",))
+
+    password_bytes = "Profesor2026*".encode("utf-8")
+    salt = bcrypt.gensalt()
+    token_hash = bcrypt.hashpw(password_bytes, salt).decode("utf-8")
+    conn.execute(
+        """
+        INSERT INTO usuarios (username, email, password, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        ("profesor", "profesor@tfm.com", token_hash, now),
+    )
 
     catalog_count = conn.execute("SELECT COUNT(*) AS c FROM libros_comunes").fetchone()["c"]
     if catalog_count == 0:
