@@ -279,14 +279,12 @@ def _seed_evaluator_data(conn: sqlite3.Connection) -> None:
     now = datetime.now(timezone.utc).isoformat()
     today = date.today().isoformat()
 
-    conn.execute(
-        """
-        DELETE FROM biblioteca_usuario
-        WHERE user_id IN (SELECT id FROM usuarios WHERE username = ?)
-        """,
+    profesor_row = conn.execute(
+        "SELECT id FROM usuarios WHERE username = ?",
         ("profesor",),
-    )
-    conn.execute("DELETE FROM usuarios WHERE username = ?", ("profesor",))
+    ).fetchone()
+    if profesor_row is not None:
+        return
 
     password_bytes = "Profesor2026*".encode("utf-8")
     salt = bcrypt.gensalt()
