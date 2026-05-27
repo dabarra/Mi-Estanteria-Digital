@@ -871,6 +871,24 @@ def _render_status_management_panel(user_id: int, book: dict[str, Any]) -> None:
         st.error(err_save)
 
 
+def _render_gallery_book_tile(book: dict[str, Any]) -> None:
+    """Tarjeta de portada para la vista Galeria dentro de un expander por estado."""
+    if book["cover_path"] and os.path.exists(book["cover_path"]):
+        st.markdown(
+            _cover_gallery_html(book["cover_path"], book["title"]),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="gallery-tile">'
+            '<div class="gallery-placeholder">Sin portada</div>'
+            f'<div class="gallery-book-title">{html.escape(book["title"])}</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    st.caption(f"{book['author']} · {book.get('estado') or '—'}")
+
+
 def library_view(user_id: int) -> None:
     st.subheader("Mi biblioteca")
     books = get_user_library(user_id)
@@ -879,25 +897,6 @@ def library_view(user_id: int) -> None:
         return
 
     view_mode = st.radio("Vista", ["Lista", "Galeria"], horizontal=True, key="library_view_mode")
-    if view_mode != "Lista":
-        cols = st.columns(4)
-        for i, book in enumerate(books):
-            with cols[i % 4]:
-                if book["cover_path"] and os.path.exists(book["cover_path"]):
-                    st.markdown(
-                        _cover_gallery_html(book["cover_path"], book["title"]),
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        '<div class="gallery-tile">'
-                        '<div class="gallery-placeholder">Sin portada</div>'
-                        f'<div class="gallery-book-title">{html.escape(book["title"])}</div>'
-                        '</div>',
-                        unsafe_allow_html=True,
-                    )
-                st.caption(f"{book['author']} · {book['estado']}")
-        return
 
     def _render_list_book_card(b: dict[str, Any]) -> None:
         bid = b["book_id"]
@@ -996,11 +995,18 @@ def library_view(user_id: int) -> None:
 
     for estado in READING_STATES:
         group = [b for b in books if (b.get("estado") or "Pendiente") == estado]
-        if not group:
-            continue
-        st.markdown(f"### {estado}")
-        for b in group:
-            _render_list_book_card(b)
+        with st.expander(f"{estado} ({len(group)})", expanded=False):
+            if not group:
+                st.caption("No hay titulos en esta seccion.")
+                continue
+            if view_mode == "Lista":
+                for b in group:
+                    _render_list_book_card(b)
+            else:
+                cols = st.columns(4)
+                for i, b in enumerate(group):
+                    with cols[i % 4]:
+                        _render_gallery_book_tile(b)
 
 
 def statistics_section(user_id: int) -> None:
