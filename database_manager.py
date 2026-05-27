@@ -843,3 +843,32 @@ def get_finished_books_detail_for_year(user_id: int, year: str) -> list[dict[str
             (user_id, year),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_abandoned_books_detail_for_year(user_id: int, year: str) -> list[dict[str, Any]]:
+    """Libros abandonados en un año (mismos campos visuales que la vista Lista)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                b.id AS book_id,
+                b.title,
+                b.author,
+                b.idioma,
+                b.paginas,
+                b.cover_path,
+                bu.estado,
+                bu.fecha_inicio,
+                bu.fecha_fin,
+                bu.paginas_leidas_abandono
+            FROM biblioteca_usuario bu
+            JOIN libros_comunes b ON b.id = bu.book_id
+            WHERE bu.user_id = ?
+              AND bu.estado = 'Abandonado'
+              AND bu.fecha_fin IS NOT NULL AND bu.fecha_fin != ''
+              AND strftime('%Y', bu.fecha_fin) = ?
+            ORDER BY bu.fecha_fin
+            """,
+            (user_id, year),
+        ).fetchall()
+    return [dict(r) for r in rows]

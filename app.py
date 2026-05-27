@@ -19,6 +19,7 @@ from database_manager import (
     add_book_to_user_library,
     add_catalog_book_and_link_user,
     find_book_by_isbn,
+    get_abandoned_books_detail_for_year,
     get_finished_books_detail_for_year,
     get_reading_statistics,
     get_user_library,
@@ -1045,6 +1046,15 @@ def statistics_section(user_id: int) -> None:
                 st.caption("Sin titulos registrados para este año.")
             else:
                 for item in detalle:
+                    with st.container(border=True):
+                        render_book_list_row(item)
+
+        with st.expander(f"Libros abandonados en {y}"):
+            detalle_abandonados = get_abandoned_books_detail_for_year(user_id, y)
+            if not detalle_abandonados:
+                st.caption("Sin títulos abandonados para este año.")
+            else:
+                for item in detalle_abandonados:
                     with st.container(border=True):
                         render_book_list_row(item)
 
