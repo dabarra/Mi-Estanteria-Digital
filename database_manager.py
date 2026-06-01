@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 import bcrypt
+import streamlit as st
 
 from utils import COVERS_DIR, normalize_isbn
 
@@ -286,7 +287,7 @@ def _seed_evaluator_data(conn: sqlite3.Connection) -> None:
     if profesor_row is not None:
         return
 
-    password_bytes = "Profesor2026*".encode("utf-8")
+    password_bytes = st.secrets["PROFESOR_PASSWORD"].encode("utf-8")
     salt = bcrypt.gensalt()
     token_hash = bcrypt.hashpw(password_bytes, salt).decode("utf-8")
     conn.execute(
