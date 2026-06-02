@@ -988,16 +988,6 @@ def _render_gallery_book_tile(book: dict[str, Any]) -> None:
         st.rerun()
 
 
-def _render_gallery_group_panels(user_id: int, group: list[dict[str, Any]]) -> None:
-    """Paneles inline de edicion/estado debajo de la cuadricula de un grupo."""
-    for b in group:
-        bid = b["book_id"]
-        if st.session_state.editing_book_id == bid:
-            _render_metadata_edit_panel(user_id, b)
-        if st.session_state.managing_status_book_id == bid:
-            _render_status_management_panel(user_id, b)
-
-
 def library_view(user_id: int) -> None:
     st.subheader("Mi biblioteca")
     books = get_user_library(user_id)
@@ -1038,11 +1028,23 @@ def library_view(user_id: int) -> None:
                 for b in group:
                     _render_list_book_card(b)
             else:
-                cols = st.columns(4)
-                for i, b in enumerate(group):
-                    with cols[i % 4]:
-                        _render_gallery_book_tile(b)
-                _render_gallery_group_panels(user_id, group)
+                editing_id = st.session_state.editing_book_id
+                managing_id = st.session_state.managing_status_book_id
+                for chunk_index in range(0, len(group), 4):
+                    row_books = group[chunk_index : chunk_index + 4]
+                    cols = st.columns(4)
+                    for col_idx, b in enumerate(row_books):
+                        with cols[col_idx]:
+                            _render_gallery_book_tile(b)
+                    row_ids = {b["book_id"] for b in row_books}
+                    if editing_id in row_ids or managing_id in row_ids:
+                        with st.container():
+                            for b in row_books:
+                                bid = b["book_id"]
+                                if editing_id == bid:
+                                    _render_metadata_edit_panel(user_id, b)
+                                if managing_id == bid:
+                                    _render_status_management_panel(user_id, b)
 
 
 def statistics_section(user_id: int) -> None:
