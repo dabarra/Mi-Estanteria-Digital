@@ -1,5 +1,11 @@
 # Mi estantería digital — TFM
 
+## Acceso Rápido para la Evaluación Técnica
+
+Para facilitar una auditoría inmediata de la aplicación sin necesidad de realizar registros manuales, se ha configurado un perfil de pruebas con un catálogo de doce libros y analíticas históricas ya precargadas. Por motivos de seguridad y privacidad en repositorios públicos, los datos de acceso específicos (nombre de usuario, correo electrónico y contraseña) no se exponen en este documento, sino que se encuentran detallados explícitamente en el archivo de diapositivas de la presentación del proyecto (documento en formato pptx).
+
+Nota importante sobre la infraestructura: Al estar desplegada en la capa gratuita de Streamlit Cloud, la aplicación entra en modo de hibernación tras periodos de inactividad, lo que provoca la regeneración del contenedor efímero y el vaciado de los datos locales introducidos en las sesiones de usuario. Para mitigar esta limitación, el sistema incorpora un mecanismo automatizado de semillero de datos (data seeding). Si al ingresar nota que la estantería se ha restablecido, no se preocupe: el sistema detectará el reinicio e inyectará de forma automática y limpia este mismo perfil de pruebas junto con sus doce libros de muestra para asegurar la continuidad de su evaluación.
+
 ## URL de despliegue oficial
 La aplicación se encuentra desplegada en la nube y disponible para su uso e inspección directa en la siguiente dirección pública:
 https://mi-estanteria-digital.streamlit.app/
