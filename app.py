@@ -872,8 +872,95 @@ def _render_status_management_panel(user_id: int, book: dict[str, Any]) -> None:
         st.error(err_save)
 
 
+def _render_metadata_edit_panel(user_id: int, b: dict[str, Any]) -> None:
+    """Formulario inline de metadatos (Lista y Galeria)."""
+    bid = b["book_id"]
+    with st.container(border=True):
+        idioma_idx = (
+            LANGUAGE_OPTIONS.index(b["idioma"])
+            if b["idioma"] in LANGUAGE_OPTIONS
+            else 0
+        )
+        st.markdown("**Editar metadatos**")
+        save_meta = False
+        cancel_meta = False
+        with st.form(f"library_edit_meta_form_{bid}"):
+            st.caption("Los cambios actualizan la ficha del libro en el catalogo comun.")
+            etitle = st.text_input("Titulo", value=b["title"], key=f"library_edit_title_{bid}")
+            eauthor = st.text_input("Autor", value=b["author"], key=f"library_edit_author_{bid}")
+            egenre = st.text_input("Genero", value=b["genre"] or "", key=f"library_edit_genre_{bid}")
+            eidioma = st.selectbox(
+                "Idioma",
+                LANGUAGE_OPTIONS,
+                index=idioma_idx,
+                key=f"library_edit_idioma_{bid}",
+            )
+            ep_def = int(b["paginas"]) if b["paginas"] is not None else 0
+            epag = st.number_input(
+                "Paginas totales (0 = sin registrar)",
+                min_value=0,
+                value=max(ep_def, 0),
+                step=1,
+                key=f"library_edit_paginas_{bid}",
+            )
+            ecover = st.file_uploader(
+                "Nueva portada (opcional)",
+                type=["jpg", "jpeg", "png"],
+                key=f"library_edit_cover_{bid}",
+            )
+            _, btn_guardar, btn_cancelar = st.columns([2, 2, 1])
+            with btn_guardar:
+                save_meta = st.form_submit_button("Guardar ficha", use_container_width=True)
+            with btn_cancelar:
+                cancel_meta = st.form_submit_button("Cancelar", use_container_width=True)
+        if cancel_meta:
+            st.session_state.editing_book_id = None
+            st.rerun()
+        if save_meta:
+            pag_val = int(epag) if epag > 0 else None
+            ref = b.get("isbn_13") or b.get("isbn_10") or str(bid)
+            cover_path_new, cover_err = save_cover_file(ref, ecover)
+            if cover_err:
+                st.error(cover_err)
+            else:
+                upd_cover = ecover is not None and cover_path_new is not None
+                ok_m, err_m = update_libro_comun_metadata(
+                    user_id,
+                    bid,
+                    etitle,
+                    eauthor,
+                    egenre,
+                    eidioma,
+                    pag_val,
+                    cover_path_new,
+                    upd_cover,
+                )
+                if ok_m:
+                    st.session_state.editing_book_id = None
+                    st.success("Ficha actualizada.")
+                    st.rerun()
+                else:
+                    st.error(err_m)
+
+
+def _open_status_management_panel(b: dict[str, Any]) -> None:
+    """Inicializa estado de sesion al abrir gestion de estado (Lista o Galeria)."""
+    bid = b["book_id"]
+    st.session_state.managing_status_book_id = bid
+    st.session_state.editing_book_id = None
+    st.session_state[f"library_status_prev_est_{bid}"] = b["estado"]
+    for _k in (
+        f"library_use_ini_{bid}",
+        f"library_use_fin_{bid}",
+        f"library_date_ini_{bid}",
+        f"library_date_fin_{bid}",
+    ):
+        st.session_state.pop(_k, None)
+
+
 def _render_gallery_book_tile(book: dict[str, Any]) -> None:
     """Tarjeta de portada para la vista Galeria dentro de un expander por estado."""
+    bid = book["book_id"]
     if book["cover_path"] and os.path.exists(book["cover_path"]):
         st.markdown(
             _cover_gallery_html(book["cover_path"], book["title"]),
@@ -888,6 +975,27 @@ def _render_gallery_book_tile(book: dict[str, Any]) -> None:
             unsafe_allow_html=True,
         )
     st.caption(f"{book['author']} · {book.get('estado') or '—'}")
+    if st.button("Editar metadatos", key=f"gallery_edit_open_{bid}", use_container_width=True):
+        st.session_state.editing_book_id = bid
+        st.session_state.managing_status_book_id = None
+        st.rerun()
+    if st.button(
+        "Gestionar estado y fechas",
+        key=f"gallery_state_open_{bid}",
+        use_container_width=True,
+    ):
+        _open_status_management_panel(book)
+        st.rerun()
+
+
+def _render_gallery_group_panels(user_id: int, group: list[dict[str, Any]]) -> None:
+    """Paneles inline de edicion/estado debajo de la cuadricula de un grupo."""
+    for b in group:
+        bid = b["book_id"]
+        if st.session_state.editing_book_id == bid:
+            _render_metadata_edit_panel(user_id, b)
+        if st.session_state.managing_status_book_id == bid:
+            _render_status_management_panel(user_id, b)
 
 
 def library_view(user_id: int) -> None:
@@ -911,85 +1019,11 @@ def library_view(user_id: int) -> None:
                     st.rerun()
             with act2:
                 if st.button("Gestionar estado y fechas", key=f"library_state_open_{bid}"):
-                    st.session_state.managing_status_book_id = bid
-                    st.session_state.editing_book_id = None
-                    st.session_state[f"library_status_prev_est_{bid}"] = b["estado"]
-                    for _k in (
-                        f"library_use_ini_{bid}",
-                        f"library_use_fin_{bid}",
-                        f"library_date_ini_{bid}",
-                        f"library_date_fin_{bid}",
-                    ):
-                        st.session_state.pop(_k, None)
+                    _open_status_management_panel(b)
                     st.rerun()
 
         if st.session_state.editing_book_id == b["book_id"]:
-            with st.container(border=True):
-                idioma_idx = (
-                    LANGUAGE_OPTIONS.index(b["idioma"])
-                    if b["idioma"] in LANGUAGE_OPTIONS
-                    else 0
-                )
-                st.markdown("**Editar metadatos**")
-                save_meta = False
-                cancel_meta = False
-                with st.form(f"library_edit_meta_form_{bid}"):
-                    st.caption("Los cambios actualizan la ficha del libro en el catalogo comun.")
-                    etitle = st.text_input("Titulo", value=b["title"], key=f"library_edit_title_{bid}")
-                    eauthor = st.text_input("Autor", value=b["author"], key=f"library_edit_author_{bid}")
-                    egenre = st.text_input("Genero", value=b["genre"] or "", key=f"library_edit_genre_{bid}")
-                    eidioma = st.selectbox(
-                        "Idioma",
-                        LANGUAGE_OPTIONS,
-                        index=idioma_idx,
-                        key=f"library_edit_idioma_{bid}",
-                    )
-                    ep_def = int(b["paginas"]) if b["paginas"] is not None else 0
-                    epag = st.number_input(
-                        "Paginas totales (0 = sin registrar)",
-                        min_value=0,
-                        value=max(ep_def, 0),
-                        step=1,
-                        key=f"library_edit_paginas_{bid}",
-                    )
-                    ecover = st.file_uploader(
-                        "Nueva portada (opcional)",
-                        type=["jpg", "jpeg", "png"],
-                        key=f"library_edit_cover_{bid}",
-                    )
-                    _, btn_guardar, btn_cancelar = st.columns([2, 2, 1])
-                    with btn_guardar:
-                        save_meta = st.form_submit_button("Guardar ficha", use_container_width=True)
-                    with btn_cancelar:
-                        cancel_meta = st.form_submit_button("Cancelar", use_container_width=True)
-                if cancel_meta:
-                    st.session_state.editing_book_id = None
-                    st.rerun()
-                if save_meta:
-                    pag_val = int(epag) if epag > 0 else None
-                    ref = b.get("isbn_13") or b.get("isbn_10") or str(bid)
-                    cover_path_new, cover_err = save_cover_file(ref, ecover)
-                    if cover_err:
-                        st.error(cover_err)
-                    else:
-                        upd_cover = ecover is not None and cover_path_new is not None
-                        ok_m, err_m = update_libro_comun_metadata(
-                            user_id,
-                            bid,
-                            etitle,
-                            eauthor,
-                            egenre,
-                            eidioma,
-                            pag_val,
-                            cover_path_new,
-                            upd_cover,
-                        )
-                        if ok_m:
-                            st.session_state.editing_book_id = None
-                            st.success("Ficha actualizada.")
-                            st.rerun()
-                        else:
-                            st.error(err_m)
+            _render_metadata_edit_panel(user_id, b)
 
         if st.session_state.managing_status_book_id == b["book_id"]:
             _render_status_management_panel(user_id, b)
@@ -1008,6 +1042,7 @@ def library_view(user_id: int) -> None:
                 for i, b in enumerate(group):
                     with cols[i % 4]:
                         _render_gallery_book_tile(b)
+                _render_gallery_group_panels(user_id, group)
 
 
 def statistics_section(user_id: int) -> None:
