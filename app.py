@@ -813,9 +813,7 @@ def _render_status_management_panel(user_id: int, book: dict[str, Any]) -> None:
         st.session_state[prev_key] = new_est
 
     if cancel_clicked:
-        for k in (prev_key, ini_chk_key, fin_chk_key, ini_date_key, fin_date_key):
-            st.session_state.pop(k, None)
-        st.session_state.managing_status_book_id = None
+        _close_status_management_panel(bid)
         st.rerun()
 
     if save_clicked:
@@ -864,9 +862,7 @@ def _render_status_management_panel(user_id: int, book: dict[str, Any]) -> None:
             ok_save, err_save = update_library_row_safe(user_id, bid, cur, fi_w, ff_w, pab)
 
         if ok_save:
-            for k in (prev_key, ini_chk_key, fin_chk_key, ini_date_key, fin_date_key):
-                st.session_state.pop(k, None)
-            st.session_state.managing_status_book_id = None
+            _close_status_management_panel(bid)
             st.success("Cambios guardados correctamente.")
             st.rerun()
         st.error(err_save)
@@ -943,19 +939,60 @@ def _render_metadata_edit_panel(user_id: int, b: dict[str, Any]) -> None:
                     st.error(err_m)
 
 
+def _status_panel_session_keys(bid: int) -> tuple[str, ...]:
+    return (
+        f"library_status_prev_est_{bid}",
+        f"library_use_ini_{bid}",
+        f"library_use_fin_{bid}",
+        f"library_date_ini_{bid}",
+        f"library_date_fin_{bid}",
+    )
+
+
+def _close_status_management_panel(bid: int) -> None:
+    """Cierra el panel de estado y limpia claves temporales (cancelar / toggle)."""
+    for k in _status_panel_session_keys(bid):
+        st.session_state.pop(k, None)
+    st.session_state.managing_status_book_id = None
+
+
 def _open_status_management_panel(b: dict[str, Any]) -> None:
     """Inicializa estado de sesion al abrir gestion de estado (Lista o Galeria)."""
     bid = b["book_id"]
     st.session_state.managing_status_book_id = bid
     st.session_state.editing_book_id = None
     st.session_state[f"library_status_prev_est_{bid}"] = b["estado"]
-    for _k in (
-        f"library_use_ini_{bid}",
-        f"library_use_fin_{bid}",
-        f"library_date_ini_{bid}",
-        f"library_date_fin_{bid}",
-    ):
-        st.session_state.pop(_k, None)
+    for k in _status_panel_session_keys(bid):
+        if k != f"library_status_prev_est_{bid}":
+            st.session_state.pop(k, None)
+
+
+def _toggle_metadata_edit(b: dict[str, Any]) -> None:
+    """Abre o cierra el panel de metadatos (mismo efecto que Cancelar al cerrar)."""
+    bid = b["book_id"]
+    if st.session_state.editing_book_id == bid:
+        st.session_state.editing_book_id = None
+    else:
+        st.session_state.editing_book_id = bid
+        st.session_state.managing_status_book_id = None
+
+
+def _toggle_status_management(b: dict[str, Any]) -> None:
+    """Abre o cierra el panel de estado/fechas (mismo efecto que Cancelar al cerrar)."""
+    bid = b["book_id"]
+    if st.session_state.managing_status_book_id == bid:
+        _close_status_management_panel(bid)
+    else:
+        _open_status_management_panel(b)
+
+
+def _clear_library_edit_panels() -> None:
+    """Cierra paneles de edicion (p. ej. al cambiar Lista <-> Galeria)."""
+    mid = st.session_state.managing_status_book_id
+    if mid is not None:
+        _close_status_management_panel(mid)
+    st.session_state.editing_book_id = None
+    st.session_state.managing_status_book_id = None
 
 
 def _render_gallery_book_tile(book: dict[str, Any]) -> None:
@@ -976,15 +1013,14 @@ def _render_gallery_book_tile(book: dict[str, Any]) -> None:
         )
     st.caption(f"{book['author']} · {book.get('estado') or '—'}")
     if st.button("Editar metadatos", key=f"gallery_edit_open_{bid}", use_container_width=True):
-        st.session_state.editing_book_id = bid
-        st.session_state.managing_status_book_id = None
+        _toggle_metadata_edit(book)
         st.rerun()
     if st.button(
         "Gestionar estado y fechas",
         key=f"gallery_state_open_{bid}",
         use_container_width=True,
     ):
-        _open_status_management_panel(book)
+        _toggle_status_management(book)
         st.rerun()
 
 
@@ -996,6 +1032,10 @@ def library_view(user_id: int) -> None:
         return
 
     view_mode = st.radio("Vista", ["Lista", "Galeria"], horizontal=True, key="library_view_mode")
+    prev_view_mode = st.session_state.get("_library_view_mode_prev")
+    if prev_view_mode is not None and prev_view_mode != view_mode:
+        _clear_library_edit_panels()
+    st.session_state["_library_view_mode_prev"] = view_mode
 
     def _render_list_book_card(b: dict[str, Any]) -> None:
         bid = b["book_id"]
@@ -1004,12 +1044,11 @@ def library_view(user_id: int) -> None:
             act1, act2 = st.columns(2)
             with act1:
                 if st.button("Editar metadatos", key=f"library_edit_open_{bid}"):
-                    st.session_state.editing_book_id = bid
-                    st.session_state.managing_status_book_id = None
+                    _toggle_metadata_edit(b)
                     st.rerun()
             with act2:
                 if st.button("Gestionar estado y fechas", key=f"library_state_open_{bid}"):
-                    _open_status_management_panel(b)
+                    _toggle_status_management(b)
                     st.rerun()
 
         if st.session_state.editing_book_id == b["book_id"]:
