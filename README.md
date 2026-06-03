@@ -2,7 +2,9 @@
 
 ## Acceso Rápido para la Evaluación Técnica
 
-Para facilitar una auditoría inmediata de la aplicación sin necesidad de realizar registros manuales, se ha configurado un perfil de pruebas con un catálogo de doce libros y analíticas históricas ya precargadas. Por motivos de seguridad y privacidad en repositorios públicos, los datos de acceso específicos (nombre de usuario, correo electrónico y contraseña) no se exponen en este documento, sino que se encuentran detallados explícitamente en el archivo de diapositivas de la presentación del proyecto (documento en formato pptx).
+Para facilitar una auditoría inmediata de la aplicación sin necesidad de realizar registros manuales, se ha configurado un perfil de pruebas con un catálogo de doce libros y analíticas históricas ya precargadas.
+
+**Credenciales de acceso:** el usuario de pruebas (nombre de usuario y correo electrónico asociado) se encuentra especificado en la presentación del proyecto en formato PPTX, en la diapositiva **Seguridad y Acceso** (`Presentacion_TFM_Daniel_Barrasa.pptx`). La contraseña de acceso **no se incluye en el repositorio** por seguridad y se indica en el **formulario de envío** del TFM.
 
 Nota importante sobre la infraestructura: Al estar desplegada en la capa gratuita de Streamlit Cloud, la aplicación entra en modo de hibernación tras periodos de inactividad, lo que provoca la regeneración del contenedor efímero y el vaciado de los datos locales introducidos en las sesiones de usuario. Para mitigar esta limitación, el sistema incorpora un mecanismo automatizado de semillero de datos (data seeding). Si al ingresar nota que la estantería se ha restablecido, no se preocupe: el sistema detectará el reinicio e inyectará de forma automática y limpia este mismo perfil de pruebas junto con sus doce libros de muestra para asegurar la continuidad de su evaluación.
 
